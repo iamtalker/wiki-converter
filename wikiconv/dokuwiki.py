@@ -5,6 +5,7 @@
 문서 ID(소문자·이름공간 a:b)와 제목은 엔진 쪽(engines/dokuwiki)이 이어 준다. 여기서는 제목 → ID 변환(doku_id)만 한다.
 """
 import re
+import urllib.parse
 
 from .tree import CAT, TPL, Doc, InlineScanner, build_lists, cell_inline, merge_text, raw_fallback
 
@@ -12,6 +13,16 @@ PH = "\x00"
 PH_RE = re.compile(PH + r"(\d+)" + PH)
 
 
+INTERWIKI = {  # 도쿠위키가 기본으로 주는 인터위키 목록(conf/interwiki.conf)
+    "wp": "https://en.wikipedia.org/wiki/", "wpko": "https://ko.wikipedia.org/wiki/",
+    "wpfr": "https://fr.wikipedia.org/wiki/", "wpde": "https://de.wikipedia.org/wiki/",
+    "wpes": "https://es.wikipedia.org/wiki/", "wppl": "https://pl.wikipedia.org/wiki/",
+    "wpjp": "https://ja.wikipedia.org/wiki/", "wpmeta": "https://meta.wikipedia.org/wiki/",
+    "doku": "https://www.dokuwiki.org/", "rfc": "https://tools.ietf.org/html/rfc",
+    "man": "http://man.cx/", "phpfn": "https://secure.php.net/",
+    "google": "https://www.google.com/search?q={URL}", "go": "https://www.google.com/search?q={URL}&btnI=lucky",
+    "ddg": "https://duckduckgo.com/?q={URL}",
+}
 PAGE_COSMETIC = {"noheader", "nofooter", "noeditbtn", "noeditbutton", "nodate", "nouser", "nolink", "noindent", "indent",
                  "header", "footer", "editbtn", "date", "user", "link", "permalink", "nopermalink"}  # {{page>…&플래그}} 중 화면 표시만 바꾸는 것
 
@@ -100,7 +111,16 @@ class Reader:
         lab = self.inline(label) if label else None
         if re.match(r"(?i)^[a-z][a-z0-9+.-]*://", target) or target.startswith("mailto:"):
             return ["url", target, lab]
-        if re.match(r"^\w+>", target):  # 인터위키(wp>…)
+        iw = re.match(r"^(\w+)>(.+)$", target)
+        if iw:  # 인터위키(wp>…): 도쿠위키 기본 목록에 있는 것은 주소로 풀고, 이 위키에만 있는 이름은 원문으로
+            base = INTERWIKI.get(iw.group(1).lower())
+            if base:
+                name = iw.group(2).strip()
+                if "{URL}" in base:  # 검색 주소 같은 것
+                    url = base.replace("{URL}", urllib.parse.quote(name, safe=""))
+                else:
+                    url = base + urllib.parse.quote(name.replace(" ", "_"), safe="/#:()_-.,'!~*")
+                return ["url", url, lab or [["t", name]]]
             return ["raw", "dokuwiki", m.group(0)]
         page, _, anchor = target.partition("#")
         return ["link", self.resolve(page) if page else self.title, lab, anchor]

@@ -162,7 +162,12 @@ class Reader:
         if name in ("clearfix", "pagecount"):
             return []
         if name == "include":
-            parts = [p.strip() for p in arg.split(",")]
+            def unesc(s):  # \, 같은 이스케이프는 읽기 앞 단계에서 자리표시가 되어 있으므로 글자로 되돌린다
+                def one(mm):
+                    kind, node, src = self.store[int(mm.group(1))]
+                    return node[1] if kind == "i" and node[0] == "t" else src
+                return PH_RE.sub(one, s)
+            parts = [unesc(p).strip() for p in arg.split(",")]
             args = []
             for p in parts[1:]:
                 if not p:
@@ -457,7 +462,7 @@ class Writer:
 
     @staticmethod
     def tpl(n):
-        name = n[1]  # 이름에 '틀:' 이 있으면 틀, 없으면 일반 문서를 끼워 넣는 것(공통 구조의 약속)
+        name = n[1].replace(",", "\\,")  # 이름에 '틀:' 이 있으면 틀, 없으면 일반 문서를 끼워 넣는 것(공통 구조의 약속)
         args = [(f"{k}={v}" if k else v).replace(",", "\\,") for k, v in n[2]]
         return "[include(" + ", ".join([name] + args) + ")]"
 

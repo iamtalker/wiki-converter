@@ -120,6 +120,19 @@ def main():
     names = read_out(out6).namelist()
     assert "images/가_나.jpg" in names and "images/책.epub" in names, names
 
+    # --- 오픈나무 [include(…)] 의 쉼표: 이름·인자에 쉼표가 있어도 왕복한다(이스케이프 찌꺼기 \x00 이 남지 않는다)
+    s, _ = bulk.convert_text("{{page>50대,60대 글}}", "dokuwiki", "opennamu")
+    assert s == "[include(50대\\,60대 글)]", s
+    d = bulk.convert_text(s, "opennamu", "mediawiki")[0]
+    assert d == "{{:50대,60대 글}}" and "\x00" not in d, d
+    d2 = bulk.convert_text("[include(틀:정보, 이름=가\\,나)]", "opennamu", "mediawiki")[0]
+    assert d2 == "{{정보|이름=가,나}}", d2
+
+    # --- 도쿠위키 인터위키 [[wp>…]]: 기본 목록에 있는 것은 주소로, 이 위키에만 있는 이름은 원문으로
+    got = bulk.convert_text("[[wp>Wiki]] [[wpko>대한민국|한국]] [[google>가 나]] [[내위키>문서]]", "dokuwiki", "mediawiki")
+    assert "[https://en.wikipedia.org/wiki/Wiki Wiki]" in got[0] and "[https://ko.wikipedia.org/wiki/%EB%8C%80%ED%95%9C%EB%AF%BC%EA%B5%AD 한국]" in got[0], got
+    assert "https://www.google.com/search?q=%EA%B0%80%20%EB%82%98" in got[0] and got[1] == 1, got
+
     # --- 문서 끼워 넣기 {{page>문서}}: 형식마다 같은 뜻으로, 섹션 지정·내용을 바꾸는 플래그는 원문으로 남긴다
     inc = "앞\n\n{{page>수태음폐경}}\n\n{{page>다른 글&noheader&nofooter}}\n\n뒤"
     got = {f: bulk.convert_text(inc, "dokuwiki", f)[0] for f in ("mediawiki", "opennamu", "markdown")}
