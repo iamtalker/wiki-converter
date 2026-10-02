@@ -64,4 +64,4 @@ python cli.py guess 문서.txt
 - `tests/` — `python tests/test_wikiconv.py`, `test_bulk.py`, `test_app.py`.
 
 ## 출처·라이선스
-변환 코어(`wikiconv/`)는 같은 저장소 주인의 [anywiki-kit](https://github.com/iamtalker) 에서 가져왔습니다(MIT). 이 프로젝트의 라이선스는 아직 정하지 않았습니다.
+변환 코어(`wikiconv/`)는 같은 저장소 주인의 anywiki-kit 에서 가져왔습니다(MIT). 이 프로젝트도 [MIT 라이선스](LICENSE)입니다.
