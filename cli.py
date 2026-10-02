@@ -33,6 +33,8 @@ def main(argv=None):
     b.add_argument("--from", dest="src", required=True)
     b.add_argument("--to", dest="dst", required=True)
     b.add_argument("--out", default="", help="만들 zip 경로(기본: output 폴더)")
+    b.add_argument("--doku-fnencode", choices=("url", "utf-8"), default="url",
+                   help="도쿠위키로 만들 때 파일 이름 방식(도쿠위키 설정 fnencode 와 같게)")
     g = sub.add_parser("guess", help="형식 짐작")
     g.add_argument("file", nargs="?", default="-")
     a = ap.parse_args(argv)
@@ -64,7 +66,7 @@ def main(argv=None):
 
             def progress(done, total):
                 print(f"\r문서 {done:,}" + (f" / {total:,}" if total else ""), end="", file=sys.stderr, flush=True)
-            rep = bulk.convert_archive(a.path, a.src, a.dst, out, progress)
+            rep = bulk.convert_archive(a.path, a.src, a.dst, out, progress, doku_fnencode=a.doku_fnencode)
             print(file=sys.stderr)
             print(f"완료: 문서 {rep.pages:,}개 · 미디어 {rep.media_total:,}개 · {rep.seconds:.1f}초 → {rep.out}")
             for k, v in rep.skipped.items():

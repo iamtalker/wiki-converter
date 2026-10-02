@@ -38,7 +38,7 @@ def safe_stem(name):
     return re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", stem)[:80]
 
 
-def run_job(job_id, path, src, dst, stem, cleanup=None):
+def run_job(job_id, path, src, dst, stem, cleanup=None, fnencode="url"):
     job = JOBS[job_id]
     out = os.path.join(OUT_DIR, f"{stem}-{dst}.zip")
     if os.path.exists(out):
@@ -47,7 +47,7 @@ def run_job(job_id, path, src, dst, stem, cleanup=None):
     def progress(done, total):
         job["done"], job["total"] = done, total
     try:
-        rep = bulk.convert_archive(path, src, dst, out, progress)
+        rep = bulk.convert_archive(path, src, dst, out, progress, doku_fnencode=fnencode)
         job.update(state="done", report=rep.as_dict(), file=os.path.basename(out), path=out)
     except Exception as e:  # 사용자에게 이유를 보여 준다
         if not isinstance(e, ValueError):
@@ -58,13 +58,15 @@ def run_job(job_id, path, src, dst, stem, cleanup=None):
             os.remove(cleanup)
 
 
-def start_job(path, src, dst, stem, cleanup=None):
+def start_job(path, src, dst, stem, cleanup=None, fnencode="url"):
+    if fnencode not in ("url", "utf-8"):
+        raise ValueError("도쿠위키 파일 이름 방식은 url 이나 utf-8 이어야 합니다")
     src, dst = bulk.norm_fmt(src), bulk.norm_fmt(dst)
     if src == dst:
         raise ValueError("읽는 형식과 만들 형식이 같습니다")
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {"state": "running", "done": 0, "total": None, "src": src, "dst": dst}
-    threading.Thread(target=run_job, args=(job_id, path, src, dst, stem, cleanup), daemon=True).start()
+    threading.Thread(target=run_job, args=(job_id, path, src, dst, stem, cleanup, fnencode), daemon=True).start()
     return job_id
 
 
@@ -159,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
                 path = (d.get("path") or "").strip().strip('"')
                 if not path or not os.path.exists(path):
                     return self.fail("그런 파일이나 폴더가 없습니다: " + path)
-                return self.send_json({"id": start_job(path, d.get("src"), d.get("dst"), safe_stem(path))})
+                return self.send_json({"id": start_job(path, d.get("src"), d.get("dst"), safe_stem(path), fnencode=d.get("fnencode") or "url")})
             if u.path == "/api/bulk":
                 q = urllib.parse.parse_qs(u.query)
                 name = (q.get("name") or ["wiki"])[0]
@@ -183,7 +185,8 @@ class Handler(BaseHTTPRequestHandler):
                     os.remove(tmp)
                     return self.fail("업로드가 중간에 끊겼습니다")
                 try:
-                    jid = start_job(tmp, (q.get("src") or [""])[0], (q.get("dst") or [""])[0], safe_stem(name), cleanup=tmp)
+                    jid = start_job(tmp, (q.get("src") or [""])[0], (q.get("dst") or [""])[0], safe_stem(name), cleanup=tmp,
+                                  fnencode=(q.get("fnencode") or ["url"])[0])
                 except ValueError:
                     os.remove(tmp)
                     raise

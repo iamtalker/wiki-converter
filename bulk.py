@@ -40,11 +40,11 @@ URL_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:)?//|^(?:https?|ftp|mailto|data):", 
 # ================================================================ 기본 자료형
 class Page:
     """문서 하나(최신 판). modified 는 UTC 'YYYY-MM-DD HH:MM:SS'."""
-    __slots__ = ("title", "text", "modified", "author", "summary", "resolve")
+    __slots__ = ("title", "text", "modified", "author", "summary", "resolve", "sid", "h1")
 
-    def __init__(self, title, text, modified="", author="", summary="", resolve=None):
+    def __init__(self, title, text, modified="", author="", summary="", resolve=None, sid="", h1=None):
         self.title, self.text, self.modified = title, text, modified or ""
-        self.author, self.summary, self.resolve = author or "", summary or "", resolve
+        self.author, self.summary, self.resolve, self.sid, self.h1 = author or "", summary or "", resolve, sid, h1
 
 
 class Media:
@@ -159,13 +159,14 @@ class Archive:
             self.zip.close()
 
 
-def _media_from(arc, names, strip="", any_ext=False):
+def _media_from(arc, names, strip="", any_ext=False, decode=False):
     """미디어 파일들. any_ext 는 미디어 전용 폴더(도쿠위키 data/media)일 때: 확장자와 상관없이 모두(숨김 파일 제외)."""
     out = []
     for n in names:
         base = os.path.basename(n)
         if (not base.startswith(".")) if any_ext else os.path.splitext(n)[1].lower() in MEDIA_EXT:
-            out.append(Media(n[len(strip):] if strip and n.startswith(strip) else n, lambda n=n: arc.open(n)))
+            ref = n[len(strip):] if strip and n.startswith(strip) else n
+            out.append(Media(urllib.parse.unquote(ref) if decode else ref, lambda n=n: arc.open(n)))
     return out
 
 
@@ -232,7 +233,7 @@ def read_dokuwiki(path, skip_default=True):
         arc.close()
         raise ValueError("도쿠위키 문서(data/pages 폴더의 .txt)를 찾지 못했습니다")
     media_root = (root[:-len("pages/")] + "media/") if root.endswith("pages/") else "media/"
-    media = _media_from(arc, [n for n in names if n.startswith(media_root)], media_root, any_ext=True)
+    media = _media_from(arc, [n for n in names if n.startswith(media_root)], media_root, any_ext=True, decode=True)
     titles_map = {}
     for n in names:
         if n == "anywiki_titles.json" or n.endswith("/anywiki_titles.json"):
@@ -253,22 +254,29 @@ def read_dokuwiki(path, skip_default=True):
     texts = {pid: arc.text(n) for pid, n in ids.items()}
     id_title, used = {}, set()
     for pid in sorted(ids):
-        h = H1_RE.match(texts[pid])
-        title = titles_map.get(pid) or (h.group(1).strip() if h else "") or tree_id_to_title(pid)
-        if title.lower() in used:  # 같은 제목이면 ID 를 제목으로(이름공간이 구분해 줌)
-            title = tree_id_to_title(pid)
-            if title.lower() in used:
-                title = f"{title} ({pid})"
+        # 제목은 ID 에서 만든다(도쿠위키에서 문서의 정체성은 ID 라서, 첫 제목줄을 제목으로 삼으면 ID·링크가 바뀐다).
+        # 이 변환기가 만든 압축 파일(anywiki_titles.json)은 거기 적힌 제목을 쓴다.
+        title = titles_map.get(pid) or tree_id_to_title(pid)
+        if title.lower() in used:
+            title = f"{title} ({pid})"
         used.add(title.lower())
         id_title[pid.lower()] = title
+
+    def same(a, b):
+        norm = lambda s: re.sub(r"[\s_]+", " ", s).strip().lower()  # noqa: E731
+        return norm(a) == norm(b)
 
     def pages():
         for pid in sorted(ids):
             text, title = texts[pid], id_title[pid.lower()]
             h = H1_RE.match(text)
-            if h and h.group(1).strip() == title:  # 제목으로 쓴 첫 제목줄은 본문에서 뺀다
+            had = False
+            if h and same(h.group(1), title):  # 제목과 같은 첫 제목줄은 본문에서 뺀다(되돌릴 때 다시 붙인다)
                 text = text[h.end():].lstrip("\n")
-            yield Page(title, text, arc.mtime_utc(ids[pid]), resolve=_doku_resolver(pid, id_title))
+                had = True
+            # 제목과 다른 제목줄은 본문 내용이므로 그대로 둔다
+            yield Page(title, text, arc.mtime_utc(ids[pid]), resolve=_doku_resolver(pid, id_title), sid=pid,
+                       h1=True if had else None)
     return Source("dokuwiki", pages, media, len(ids), skipped, arc.close)
 
 
@@ -575,7 +583,7 @@ def convert_page(p, src, dst, idx, rep, used):
     except Exception as e:  # 문서 하나가 이상해도 전체는 계속한다(내용은 잃지 않게 원문을 남긴다)
         rep.failed.append(f"{p.title}: {e}")
         text = wikiconv.render(wikiconv.Doc([["raw", SYNTAX[src], p.text]]), SYNTAX[dst], p.title)
-    return Page(p.title, text, p.modified, p.author, p.summary)
+    return Page(p.title, text, p.modified, p.author, p.summary, h1=p.h1)
 
 
 # ================================================================ 쓰기
@@ -603,15 +611,22 @@ def _zinfo(name, modified):
     return zi
 
 
-def _write_media(z, media, folder):
+def _write_media(z, media, folder, fn=lambda s: s):
     for m in media:
-        zi = _zinfo(folder + m.flat, "")
+        zi = _zinfo(folder + fn(m.flat), "")
         with m.opener() as src, z.open(zi, "w", force_zip64=True) as dst:
             shutil.copyfileobj(src, dst, 1 << 20)
 
 
-def _id_path(pid):
-    return "/".join(urllib.parse.quote(p, safe="") for p in pid.split(":"))
+def _urlenc(s):
+    """PHP 의 urlencode 와 같은 결과(도쿠위키 fnencode=url 의 파일 이름)."""
+    return urllib.parse.quote_plus(s, safe="").replace("~", "%7E")
+
+
+def _id_path(pid, fnencode="url"):
+    """문서 ID → 파일 경로. fnencode: 도쿠위키 설정(conf['fnencode'])과 같아야 도쿠위키가 파일을 찾는다.
+    url(기본값)은 한글 등을 %XX 로, utf-8 은 한글 이름 그대로."""
+    return "/".join(p if fnencode == "utf-8" else _urlenc(p) for p in pid.split(":"))
 
 
 def _readme(dst, n, has_media):
@@ -635,8 +650,11 @@ def _readme(dst, n, has_media):
     return head + "\n\n" + how + notes + "\n"
 
 
-def write_dokuwiki(pages, media, out):
-    from wikiconv.dokuwiki import doku_id
+def write_dokuwiki(pages, media, out, fnencode="url"):
+    from wikiconv.dokuwiki import doku_id, id_to_title
+    if fnencode not in ("url", "utf-8"):
+        raise ValueError("도쿠위키 파일 이름 방식은 url 이나 utf-8 이어야 합니다")
+    enc = (lambda s: s) if fnencode == "utf-8" else _urlenc
     seen, titles, n = set(), {}, 0
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
         for p in pages:
@@ -646,11 +664,18 @@ def write_dokuwiki(pages, media, out):
                 pid, k = f"{base}_{k}", k + 1
             seen.add(pid)
             titles[pid] = p.title
-            z.writestr(_zinfo("data/pages/" + _id_path(pid) + ".txt", p.modified), f"====== {p.title} ======\n\n" + p.text)
+            # 제목 줄은 ID 로 제목을 되살릴 수 없을 때만 붙인다(ID 는 소문자·밑줄이라 대소문자·기호가 사라짐).
+            # 미디어위키가 첫 글자를 대문자로 바꾼 것(satisfactory → Satisfactory)은 정보가 아니므로 무시한다.
+            derived = id_to_title(pid)
+            need_h1 = p.h1 is True or (p.h1 is None and p.title not in (derived, derived[:1].upper() + derived[1:]))
+            z.writestr(_zinfo("data/pages/" + _id_path(pid, fnencode) + ".txt", p.modified),
+                       (f"====== {p.title} ======\n\n" if need_h1 else "") + p.text)
             n += 1
         z.writestr("anywiki_titles.json", json.dumps(titles, ensure_ascii=False))
-        _write_media(z, media, "data/media/")
-        z.writestr("읽어 주세요.txt", _readme("dokuwiki", n, bool(media)))
+        _write_media(z, media, "data/media/", enc)
+        z.writestr("읽어 주세요.txt", _readme("dokuwiki", n, bool(media)) +
+                   f"\n도쿠위키 파일 이름 방식: {fnencode}  (도쿠위키 설정 fnencode 와 같아야 문서를 찾습니다. "
+                   "다르면 변환할 때 다시 고르세요)\n")
     return n
 
 
@@ -741,7 +766,7 @@ WRITERS = {"dokuwiki": write_dokuwiki, "mediawiki": write_mediawiki, "opennamu":
 
 
 # ================================================================ 전체 흐름
-def convert_archive(path, src, dst, out, progress=None, **kw):
+def convert_archive(path, src, dst, out, progress=None, doku_fnencode="url", **kw):
     """path(zip·폴더·파일) 를 src 형식으로 읽어 dst 형식의 zip(out) 으로 만든다. Report 를 돌려준다."""
     src, dst = norm_fmt(src), norm_fmt(dst)
     if src == dst:
@@ -766,7 +791,7 @@ def convert_archive(path, src, dst, out, progress=None, **kw):
         os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
         part = out + ".part"
         try:
-            WRITERS[dst](stream(), source.media, part)
+            WRITERS[dst](stream(), source.media, part, **({"fnencode": doku_fnencode} if dst == "dokuwiki" else {}))
             os.replace(part, out)
         finally:
             if os.path.exists(part):

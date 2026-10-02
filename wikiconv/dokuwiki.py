@@ -5,6 +5,7 @@
 문서 ID(소문자·이름공간 a:b)와 제목은 엔진 쪽(engines/dokuwiki)이 이어 준다. 여기서는 제목 → ID 변환(doku_id)만 한다.
 """
 import re
+import unicodedata
 import urllib.parse
 
 from .tree import CAT, TPL, Doc, InlineScanner, build_lists, cell_inline, merge_text, raw_fallback
@@ -27,16 +28,34 @@ PAGE_COSMETIC = {"noheader", "nofooter", "noeditbtn", "noeditbutton", "nodate", 
                  "header", "footer", "editbtn", "date", "user", "link", "permalink", "nopermalink"}  # {{page>…&플래그}} 중 화면 표시만 바꾸는 것
 
 
+def _clean_part(t):
+    """도쿠위키가 ID 에서 지우는 글자를 '_' 로: 영문 기호, 유니코드 문장부호·기호·공백(‘ ’ “ ” … 등), 라틴 악센트 제거."""
+    t = t.replace(":", "_").replace("/", "_").replace(";", "_")
+    out = []
+    for c in t:
+        if ord(c) < 128:
+            out.append(c)
+            continue
+        cat = unicodedata.category(c)
+        if cat[0] in "PSZC":
+            out.append("_")
+            continue
+        d = unicodedata.normalize("NFD", c)
+        out.append(d[0] if len(d) > 1 and d[0].isascii() else c)  # é → e (한글 등은 그대로)
+    t = re.sub(r"[\s\x00-\x1f!\"#$%&'()*+,<=>?@\[\\\]^`{|}~]+", "_", "".join(out))
+    return re.sub(r"_+", "_", t).strip("_.")
+
+
 def doku_id(t):
-    """공통 제목 → 도쿠위키 문서 ID. 분류·틀은 이름공간으로."""
+    """공통 제목 → 도쿠위키 문서 ID(도쿠위키 cleanID 와 같은 결과). 분류·틀은 이름공간으로.
+    공백 없이 붙은 ':' 는 이름공간 구분자로 두고(scrapbook:문서), 'A: B' 같은 ':' 는 글자로 본다."""
     ns = ""
     for p, name in ((CAT, "분류:"), (TPL, "틀:")):
         if t.startswith(p):
             ns, t = name, t[len(p):]
             break
-    t = t.lower().replace(":", "_").replace("/", "_").replace(";", "_")
-    t = re.sub(r"[\s\x00-\x1f!\"#$%&'()*+,<=>?@\[\\\]^`{|}~]+", "_", t)
-    t = re.sub(r"_+", "_", t).strip("_.") or "_"
+    parts = [_clean_part(x) for x in re.split(r"(?<=\S):(?=\S)", t.lower())]
+    t = ":".join(x for x in parts if x) or "_"
     if len(t.encode("utf-8")) > 180:  # 파일 이름 한도(255바이트) 안에 들게
         import hashlib
         t = t.encode("utf-8")[:160].decode("utf-8", "ignore").rstrip("_") + "_" + hashlib.sha1(t.encode()).hexdigest()[:8]
@@ -294,8 +313,38 @@ class Reader:
         return build_lists(items, lambda body: ["p", self.inline(body)])
 
 
+MD_TAG_RE = re.compile(r"<markdown>(.*?)</markdown>", re.S)
+PROTECT_RE = re.compile(r"<(code|file|nowiki|html|php)\b.*?</\1>|%%.*?%%", re.S)
+
+
 def read(text, title="", resolve=None):
+    """<markdown>…</markdown>(도쿠위키 markdown 플러그인) 블록은 마크다운으로 읽어 이어 붙이고, 나머지는 도쿠위키 문법으로 읽는다."""
     text = (text or "").replace("\r\n", "\n")
+    if "<markdown>" not in text:
+        return _read_plain(text, title, resolve)
+    spans = [m.span() for m in PROTECT_RE.finditer(text)]  # 코드·원문 블록 안의 글자는 건드리지 않는다
+    pieces, pos = [], 0
+    for m in MD_TAG_RE.finditer(text):
+        if any(a <= m.start() < b for a, b in spans):
+            continue
+        pieces.append((False, text[pos:m.start()]))
+        pieces.append((True, m.group(1)))
+        pos = m.end()
+    if not pieces:
+        return _read_plain(text, title, resolve)
+    pieces.append((False, text[pos:]))
+    from . import markdown as md
+    blocks, cats = [], []
+    for is_md, part in pieces:
+        if not part.strip():
+            continue
+        d = md.read(part, title) if is_md else _read_plain(part, title, resolve)
+        blocks += d.blocks
+        cats += [c for c in d.cats if c not in cats]
+    return Doc(blocks, cats, None)
+
+
+def _read_plain(text, title="", resolve=None):
     r = Reader(title, resolve)
     m = re.match(r"\s*이 문서는 \[\[([^\]|]+)(?:\|[^\]]*)?\]\] 문서로 넘겨줍니다\.\s*$", text)
     if m:

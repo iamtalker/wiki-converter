@@ -81,6 +81,11 @@ a.btn{display:inline-block;text-decoration:none;background:var(--accent);color:v
         <span>→</span>
         <label>대상 <select id="b-dst"></select></label>
       </div>
+      <div class="row" id="b-fn-row" hidden>
+        <label>도쿠위키 파일 이름 방식
+          <select id="b-fn"><option value="url">url (도쿠위키 기본값)</option><option value="utf-8">utf-8 (한글 이름 그대로)</option></select></label>
+        <span class="hint" style="margin:0">새 도쿠위키 설정(<code>fnencode</code>)과 같아야 문서를 찾습니다. 모르면 기본값이고, 한글 문서 이름이 파일 이름에 그대로 보이는 위키는 utf-8 입니다.</span>
+      </div>
       <div class="hint" id="b-hint"></div>
       <div class="drop" id="b-drop" tabindex="0"><b>파일을 여기에 끌어다 놓거나 눌러서 고르세요</b><br><span id="b-drop-sub">zip · db · xml</span></div>
       <input type="file" id="b-file" hidden>
@@ -166,7 +171,8 @@ $("d-copy").onclick = async () => {
 // ---- 대량 변환
 let picked = null;
 function hint(){ $("b-hint").textContent = HINT[$("b-src").value]; $("b-drop-sub").textContent = SUB[$("b-src").value]; }
-$("b-src").onchange = hint; hint();
+function fnrow(){ $("b-fn-row").hidden = $("b-dst").value !== "dokuwiki"; }
+$("b-src").onchange = hint; $("b-dst").onchange = fnrow; hint(); fnrow();
 const drop = $("b-drop");
 drop.onclick = () => $("b-file").click();
 drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") $("b-file").click(); };
@@ -195,7 +201,7 @@ $("b-go").onclick = async () => {
       id = await upload(src, dst, picked);
     } else {
       status("읽는 중…", 2);
-      id = (await api("/api/bulk-path", {path, src, dst})).id;
+      id = (await api("/api/bulk-path", {path, src, dst, fnencode: $("b-fn").value})).id;
     }
     await poll(id);
   }catch(e){ status(`<span class="bad">실패: ${esc(e.message)}</span>`, 0); }
@@ -205,7 +211,7 @@ $("b-go").onclick = async () => {
 function upload(src, dst, f){
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
-    x.open("POST", `/api/bulk?src=${src}&dst=${dst}&name=${encodeURIComponent(f.name)}`);
+    x.open("POST", `/api/bulk?src=${src}&dst=${dst}&fnencode=${$("b-fn").value}&name=${encodeURIComponent(f.name)}`);
     x.setRequestHeader("X-Requested-With", "wiki-converter");
     x.upload.onprogress = e => status("파일을 읽어 들이는 중…", e.lengthComputable ? Math.round(e.loaded * 30 / e.total) : 5, `${(e.loaded/1048576).toFixed(0)} / ${(f.size/1048576).toFixed(0)} MB`);
     x.onload = () => { let j = {}; try{ j = JSON.parse(x.responseText); }catch(e){} x.status === 200 ? resolve(j.id) : reject(new Error(j.error || x.statusText)); };

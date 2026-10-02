@@ -52,8 +52,9 @@ def main():
     names = z.namelist()
     assert "mediawiki-import.xml" in names and "images/logo.png" in names and "images/사진.png" in names, names
     xml = html.unescape(z.read("mediawiki-import.xml").decode("utf-8"))
-    assert "<title>첫 화면</title>" in xml and "<title>삼겹살 가격</title>" in xml, xml
-    assert "[[삼겹살 가격|삼겹살 문서]]" in xml, xml          # 도쿠위키 ID 링크가 제목으로 풀린다
+    assert "<title>start</title>" in xml and "<title>projects:삼겹살</title>" in xml, xml   # 제목은 ID 에서 만든다(도쿠위키의 정체성은 ID)
+    assert "[[projects:삼겹살|삼겹살 문서]]" in xml, xml          # 도쿠위키 ID 링크가 제목으로 풀린다
+    assert "= 삼겹살 가격 =" in xml and "= 첫 화면 =" in xml, xml    # 본문의 첫 제목줄은 내용으로 남는다
     assert "[[File:logo.png|로고]]" in xml and "[[File:사진.png]]" in xml, xml
     assert "[[Category:음식]]" in xml and "'''굵게'''" in xml and "<ref>각주 내용</ref>" in xml, xml
     assert "옛 판" not in xml                                # attic 은 옮기지 않는다
@@ -67,9 +68,9 @@ def main():
     open(dbfile, "wb").write(z.read("data.db"))
     db = sqlite3.connect(dbfile)
     titles = {t for (t,) in db.execute("select title from data")}
-    assert titles == {"첫 화면", "삼겹살 가격", "Foo"}, titles
+    assert titles == {"Start", "Projects:삼겹살", "Foo"}, titles
     body = dict(db.execute("select title, data from data"))
-    assert "[[분류:음식]]" in body["삼겹살 가격"] and "[[파일:logo.png|로고]]" in body["첫 화면"] or "파일:logo.png" in body["첫 화면"], body
+    assert "[[분류:음식]]" in body["Projects:삼겹살"] and "파일:logo.png" in body["Start"], body
     assert db.execute("select count(*) from back where type='cat'").fetchone()[0] == 1
     db.close()
 
@@ -78,8 +79,8 @@ def main():
     assert rep.pages == 3, rep.as_dict()
     z = read_out(out3)
     names = z.namelist()
-    assert "wiki-markdown/삼겹살 가격.md" in names and "wiki-markdown/logo.png" in names, names
-    md = z.read("wiki-markdown/삼겹살 가격.md").decode("utf-8")
+    assert "wiki-markdown/Projects：삼겹살.md" in names and "wiki-markdown/logo.png" in names, names
+    md = z.read("wiki-markdown/Projects：삼겹살.md").decode("utf-8")
     assert "| **가게** | **가격** |" in md and "```python" in md, md
 
     # --- 마크다운 → 도쿠위키(폴더 입력도 된다)
@@ -90,7 +91,7 @@ def main():
     out4 = os.path.join(tmp, "doku-out.zip")
     rep = bulk.convert_archive(folder, "markdown", "dokuwiki", out4)
     z = read_out(out4)
-    assert rep.pages == 1 and "data/media/그림.png" in z.namelist(), (rep.as_dict(), z.namelist())
+    assert rep.pages == 1 and "data/media/%EA%B7%B8%EB%A6%BC.png" in z.namelist(), (rep.as_dict(), z.namelist())
     page = [n for n in z.namelist() if n.startswith("data/pages/")][0]
     assert "**안녕**" in z.read(page).decode("utf-8")
 
@@ -119,6 +120,47 @@ def main():
     assert rep.media_total == 2 and not rep.media_missing and rep.raw == 1, rep.as_dict()
     names = read_out(out6).namelist()
     assert "images/가_나.jpg" in names and "images/책.epub" in names, names
+
+    # --- 도쿠위키 ID 는 도쿠위키 cleanID 와 같아야 엔진이 파일을 찾는다(곡선 따옴표·악센트·이름공간)
+    from wikiconv.dokuwiki import doku_id
+    assert doku_id("‘국가테러대책회의 의장 = 국무총리’, 황교안 총리는 몰랐다") == "국가테러대책회의_의장_국무총리_황교안_총리는_몰랐다"
+    assert doku_id("Café “Test” — 끝…") == "cafe_test_끝"
+    assert doku_id("scrapbook:김한길 안철수") == "scrapbook:김한길_안철수" and doku_id("Star Wars: A New Hope") == "star_wars_a_new_hope"
+    # --- 제목 줄(======)이 없던 문서에는 새로 붙이지 않는다(원본 그대로)
+    nh = os.path.join(tmp, "noh1.zip")
+    make_zip(nh, {"data/pages/ns/글.txt": "본문만 있는 문서\n", "data/pages/제목있음.txt": "====== 진짜 제목 ======\n\n본문\n"})
+    for hop in ("mediawiki", "markdown"):
+        o1 = os.path.join(tmp, f"noh1-{hop}.zip")
+        bulk.convert_archive(nh, "dokuwiki", hop, o1)
+        o2 = os.path.join(tmp, f"noh1-{hop}-back.zip")
+        bulk.convert_archive(o1, hop, "dokuwiki", o2, doku_fnencode="utf-8")
+        z2 = read_out(o2)
+        pg = {n: z2.read(n).decode("utf-8") for n in z2.namelist() if n.startswith("data/pages/")}
+        assert pg.get("data/pages/ns/글.txt") == "본문만 있는 문서\n", (hop, pg)   # 이름공간도 그대로, 제목 줄은 안 붙음
+        assert pg.get("data/pages/제목있음.txt") == "====== 진짜 제목 ======\n\n본문\n", (hop, pg)   # ID 도 본문의 제목 줄도 원본 그대로
+    # --- <markdown> 플러그인 블록은 마크다운으로 읽어 진짜 구조로 옮긴다(# 앞 공백 1칸도 제목)
+    got, _ = bulk.convert_text("<markdown>\n # 제목 \n\n본문 **굵게**\n\n## 둘째\n</markdown>\n\n도쿠위키 //글//\n\n%%<markdown>그대로</markdown>%%", "dokuwiki", "mediawiki")
+    assert "= 제목 =" in got and "== 둘째 ==" in got and "'''굵게'''" in got and "''글''" in got and "markdown>그대로" in got, got
+
+    # --- 도쿠위키 파일 이름 방식: url(기본, %XX) 과 utf-8(한글 그대로)이 도쿠위키 설정(fnencode)과 같아야 문서를 찾는다
+    mdz = os.path.join(tmp, "fn-src.zip")
+    make_zip(mdz, {"위키/삼겹살 가격.md": "# 가격\n![](사진.png)\n", "위키/사진.png": PNG})
+    for mode, want_page, want_media in (("url", "data/pages/%EC%82%BC%EA%B2%B9%EC%82%B4_%EA%B0%80%EA%B2%A9.txt",
+                                         "data/media/%EC%82%AC%EC%A7%84.png"),
+                                        ("utf-8", "data/pages/삼겹살_가격.txt", "data/media/사진.png")):
+        o = os.path.join(tmp, f"fn-{mode}.zip")
+        bulk.convert_archive(mdz, "markdown", "dokuwiki", o, doku_fnencode=mode)
+        names = read_out(o).namelist()
+        assert want_page in names and want_media in names, (mode, names)
+        back = os.path.join(tmp, f"fn-back-{mode}.zip")      # 어느 방식으로 만든 것이든 다시 읽는다(그림 이름 포함)
+        rep = bulk.convert_archive(o, "dokuwiki", "mediawiki", back)
+        assert rep.pages == 1 and rep.media_total == 1 and not rep.media_missing, (mode, rep.as_dict())
+    try:
+        bulk.convert_archive(mdz, "markdown", "dokuwiki", os.path.join(tmp, "x2.zip"), doku_fnencode="euc-kr")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("잘못된 fnencode 를 받아들임")
 
     # --- 오픈나무 [include(…)] 의 쉼표: 이름·인자에 쉼표가 있어도 왕복한다(이스케이프 찌꺼기 \x00 이 남지 않는다)
     s, _ = bulk.convert_text("{{page>50대,60대 글}}", "dokuwiki", "opennamu")

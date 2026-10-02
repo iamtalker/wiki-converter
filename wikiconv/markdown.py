@@ -399,7 +399,7 @@ class Reader:
                 out.append(["math", "\n".join(buf)])
                 i = j + 1
                 continue
-            m = re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", ln)
+            m = re.match(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$", ln)  # 마크다운 규칙: # 앞에 공백 3칸까지 허용
             if m:
                 flush()
                 out.append(["h", len(m.group(1)), self.inline(m.group(2))])
