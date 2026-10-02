@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>위키 변환기</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1d2330;--sub:#667085;--line:#d9dde5;--accent:#2a5bd7;--accent-t:#fff;--ok:#14794a;--warn:#b25e09;--bad:#b42318;--code:#f0f2f6}
+@media (prefers-color-scheme:dark){:root{--bg:#14171d;--card:#1c2029;--text:#e7eaf0;--sub:#98a2b3;--line:#323847;--accent:#6c93ff;--accent-t:#0e1320;--ok:#4cc38a;--warn:#f0a04b;--bad:#f97066;--code:#252a36}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,"Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+header{padding:18px 16px 0;max-width:1100px;margin:0 auto}
+h1{font-size:20px;margin:0 0 4px}
+header p{margin:0;color:var(--sub);font-size:13px}
+main{max-width:1100px;margin:0 auto;padding:12px 16px 40px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:14px 0}
+.tab{background:none;border:0;border-bottom:3px solid transparent;color:var(--sub);padding:9px 14px;font:inherit;font-weight:600;cursor:pointer}
+.tab[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+.panel[hidden]{display:none}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+label{font-size:13px;color:var(--sub)}
+select,input[type=text]{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
+input[type=text]{min-width:260px;flex:1}
+button{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:8px 14px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-t);border-color:var(--accent);font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:760px){.cols{grid-template-columns:1fr}}
+textarea{width:100%;min-height:340px;resize:vertical;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px;font:13px/1.5 ui-monospace,Consolas,"D2Coding",monospace}
+.note{font-size:13px;color:var(--sub);min-height:20px;margin:6px 0}
+.note b{color:var(--text)}
+.warn{color:var(--warn)}.bad{color:var(--bad)}.ok{color:var(--ok)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:26px 14px;text-align:center;color:var(--sub);cursor:pointer;transition:.15s}
+.drop.over{border-color:var(--accent);color:var(--accent)}
+.drop b{color:var(--text)}
+.bar{height:10px;background:var(--code);border-radius:6px;overflow:hidden;margin:10px 0 4px}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.hint{font-size:13px;color:var(--sub);margin:4px 0 12px}
+ul.rep{margin:8px 0;padding-left:20px}
+ul.rep li{margin:3px 0}
+code{background:var(--code);padding:1px 5px;border-radius:5px;font-size:12.5px}
+details{margin-top:8px;font-size:13px}
+a.btn{display:inline-block;text-decoration:none;background:var(--accent);color:var(--accent-t);border-radius:8px;padding:9px 16px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>위키 변환기</h1>
+  <p>도쿠위키 · 미디어위키 · 오픈나무(나무마크) · 마크다운 — 이 컴퓨터 안에서만 변환하고, 어디로도 보내지 않습니다.</p>
+</header>
+<main>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-doc" aria-selected="true" data-p="doc">문서 변환</button>
+    <button class="tab" role="tab" id="tab-bulk" aria-selected="false" data-p="bulk">대량 변환</button>
+  </div>
+
+  <!-- 문서 변환 -->
+  <section class="panel" id="p-doc">
+    <div class="row">
+      <label>원본 <select id="d-src"></select></label>
+      <button id="d-swap" title="원본과 대상을 맞바꿉니다">⇄</button>
+      <label>대상 <select id="d-dst"></select></label>
+      <label>문서 제목(선택) <input type="text" id="d-title" style="min-width:160px;flex:0" placeholder="링크 계산에 쓰임"></label>
+    </div>
+    <div class="cols">
+      <div><textarea id="d-in" spellcheck="false" placeholder="여기에 위키 문서를 붙여넣으세요"></textarea></div>
+      <div><textarea id="d-out" spellcheck="false" readonly placeholder="변환 결과가 여기에 나옵니다"></textarea></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="d-copy">결과 복사</button>
+      <span class="note" id="d-note"></span>
+    </div>
+  </section>
+
+  <!-- 대량 변환 -->
+  <section class="panel" id="p-bulk" hidden>
+    <div class="card">
+      <div class="row">
+        <label>원본 <select id="b-src"></select></label>
+        <span>→</span>
+        <label>대상 <select id="b-dst"></select></label>
+      </div>
+      <div class="hint" id="b-hint"></div>
+      <div class="drop" id="b-drop" tabindex="0"><b>파일을 여기에 끌어다 놓거나 눌러서 고르세요</b><br><span id="b-drop-sub">zip · db · xml</span></div>
+      <input type="file" id="b-file" hidden>
+      <div class="row" style="margin-top:12px">
+        <label style="flex:1;display:flex;gap:8px;align-items:center">또는 이 컴퓨터의 경로
+          <input type="text" id="b-path" placeholder='예: C:\wiki\dokuwiki\data.zip  (폴더도 됩니다)'></label>
+        <button class="primary" id="b-go">변환 시작</button>
+      </div>
+      <div class="hint">용량이 아주 큰 파일은 경로로 지정하는 쪽이 빠릅니다(올리는 시간이 없음). 원본은 건드리지 않습니다.</div>
+    </div>
+    <div class="card" id="b-status" hidden>
+      <div id="b-msg"></div>
+      <div class="bar"><i id="b-bar"></i></div>
+      <div class="note" id="b-sub"></div>
+      <div id="b-result"></div>
+    </div>
+    <div class="note">변환 결과는 이 프로그램 폴더의 <code>output</code> 폴더에도 저장됩니다. 문서 이력(옛 판)·계정·토론은 옮기지 않고, 각 문서의 최신 판만 옮깁니다.</div>
+  </section>
+</main>
+
+<script>
+const FORMATS = [["dokuwiki","도쿠위키"],["mediawiki","미디어위키"],["opennamu","오픈나무(나무마크)"],["markdown","마크다운"]];
+const LABEL = Object.fromEntries(FORMATS);
+const HINT = {
+  dokuwiki: "도쿠위키 폴더 안의 data 폴더(data/pages 와 data/media 가 들어 있는)를 zip 으로 묶어서 넣으세요.",
+  mediawiki: "위키의 Special:Export 로 받은 XML(.xml, .xml.gz)을 그대로 넣으세요. 이미지 폴더를 같이 zip 에 넣으면 이미지도 옮깁니다.",
+  opennamu: "openNAMU 의 data.db 파일을 그대로 넣으세요(이미지 폴더와 함께 zip 으로 묶어도 됩니다).",
+  markdown: ".md 파일들이 들어 있는 폴더를 zip 으로 묶어서 넣으세요(그림 파일도 같이 옮깁니다)."
+};
+const SUB = {dokuwiki:"zip", mediawiki:"xml · xml.gz · zip", opennamu:"db · zip", markdown:"zip"};
+const $ = id => document.getElementById(id);
+
+function fill(sel, withAuto){
+  sel.innerHTML = (withAuto ? '<option value="auto">자동 감지</option>' : '') +
+    FORMATS.map(([k,v]) => `<option value="${k}">${v}</option>`).join("");
+}
+fill($("d-src"), true); fill($("d-dst")); fill($("b-src")); fill($("b-dst"));
+$("d-dst").value = "mediawiki"; $("b-dst").value = "mediawiki"; $("b-src").value = "dokuwiki";
+
+async function api(path, body){
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json","X-Requested-With":"wiki-converter"}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+// ---- 탭
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", x === t));
+  for (const p of ["doc","bulk"]) $("p-"+p).hidden = p !== t.dataset.p;
+});
+
+// ---- 문서 변환
+let timer = 0, seq = 0;
+async function convertDoc(){
+  const text = $("d-in").value, my = ++seq;
+  if (!text.trim()){ $("d-out").value = ""; $("d-note").textContent = ""; return; }
+  try{
+    const j = await api("/api/text", {text, src:$("d-src").value, dst:$("d-dst").value, title:$("d-title").value});
+    if (my !== seq) return;
+    $("d-out").value = j.result;
+    let n = "";
+    if ($("d-src").value === "auto") n = j.detected ? `감지한 형식: <b>${LABEL[j.src]}</b>` : "형식을 확실히 알 수 없어 마크다운으로 봤습니다. 원본 형식을 직접 고르세요.";
+    if (j.src === $("d-dst").value) n += (n ? " · " : "") + "원본과 대상이 같아 그대로 보여 줍니다.";
+    if (j.raw) n += (n ? " · " : "") + `<span class="warn">옮기지 못해 원문 그대로 남긴 곳 ${j.raw}곳</span>`;
+    $("d-note").innerHTML = n;
+  }catch(e){ if (my === seq){ $("d-out").value = ""; $("d-note").innerHTML = `<span class="bad">${esc(e.message)}</span>`; } }
+}
+function schedule(){ clearTimeout(timer); timer = setTimeout(convertDoc, 250); }
+["d-in","d-src","d-dst","d-title"].forEach(id => $(id).addEventListener(id === "d-in" || id === "d-title" ? "input" : "change", schedule));
+$("d-swap").onclick = () => {
+  let s = $("d-src").value; if (s === "auto") s = $("d-dst").value === "markdown" ? "mediawiki" : "markdown";
+  const d = $("d-dst").value;
+  $("d-src").value = d; $("d-dst").value = s;
+  if ($("d-out").value) $("d-in").value = $("d-out").value;
+  convertDoc();
+};
+$("d-copy").onclick = async () => {
+  try{ await navigator.clipboard.writeText($("d-out").value); $("d-note").innerHTML = '<span class="ok">복사했습니다</span>'; }
+  catch(e){ $("d-out").select(); document.execCommand("copy"); }
+};
+
+// ---- 대량 변환
+let picked = null;
+function hint(){ $("b-hint").textContent = HINT[$("b-src").value]; $("b-drop-sub").textContent = SUB[$("b-src").value]; }
+$("b-src").onchange = hint; hint();
+const drop = $("b-drop");
+drop.onclick = () => $("b-file").click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") $("b-file").click(); };
+$("b-file").onchange = e => pick(e.target.files[0]);
+["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => pick(e.dataTransfer.files[0]));
+function pick(f){
+  if (!f) return;
+  picked = f; $("b-path").value = "";
+  drop.innerHTML = `<b>${esc(f.name)}</b><br><span>${(f.size/1048576).toFixed(1)} MB — 선택됨</span>`;
+}
+$("b-path").addEventListener("input", () => { if ($("b-path").value) { picked = null; drop.innerHTML = '<b>파일을 여기에 끌어다 놓거나 눌러서 고르세요</b><br><span id="b-drop-sub"></span>'; hint(); } });
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function status(msg, pct, sub){ $("b-status").hidden = false; $("b-msg").innerHTML = msg; $("b-bar").style.width = pct + "%"; $("b-sub").textContent = sub || ""; }
+
+$("b-go").onclick = async () => {
+  const src = $("b-src").value, dst = $("b-dst").value, path = $("b-path").value.trim();
+  if (src === dst) return alert("원본과 대상 형식이 같습니다.");
+  if (!picked && !path) return alert("파일을 고르거나 경로를 적어 주세요.");
+  $("b-go").disabled = true; $("b-result").innerHTML = "";
+  try{
+    let id;
+    if (picked){
+      id = await upload(src, dst, picked);
+    } else {
+      status("읽는 중…", 2);
+      id = (await api("/api/bulk-path", {path, src, dst})).id;
+    }
+    await poll(id);
+  }catch(e){ status(`<span class="bad">실패: ${esc(e.message)}</span>`, 0); }
+  $("b-go").disabled = false;
+};
+
+function upload(src, dst, f){
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", `/api/bulk?src=${src}&dst=${dst}&name=${encodeURIComponent(f.name)}`);
+    x.setRequestHeader("X-Requested-With", "wiki-converter");
+    x.upload.onprogress = e => status("파일을 읽어 들이는 중…", e.lengthComputable ? Math.round(e.loaded * 30 / e.total) : 5, `${(e.loaded/1048576).toFixed(0)} / ${(f.size/1048576).toFixed(0)} MB`);
+    x.onload = () => { let j = {}; try{ j = JSON.parse(x.responseText); }catch(e){} x.status === 200 ? resolve(j.id) : reject(new Error(j.error || x.statusText)); };
+    x.onerror = () => reject(new Error("업로드에 실패했습니다"));
+    x.send(f);
+  });
+}
+
+async function poll(id){
+  for(;;){
+    const j = await (await fetch("/api/job?id=" + id)).json();
+    if (j.state === "running"){
+      const pct = j.total ? 30 + Math.min(65, Math.round(j.done * 65 / j.total)) : 50;
+      status(`${LABEL[j.src]} → ${LABEL[j.dst]} 변환 중…`, pct, j.total ? `문서 ${j.done.toLocaleString()} / ${j.total.toLocaleString()}` : `문서 ${j.done.toLocaleString()}개 처리`);
+      await new Promise(r => setTimeout(r, 700));
+      continue;
+    }
+    if (j.state === "error") throw new Error(j.error);
+    showReport(id, j); return;
+  }
+}
+
+function showReport(id, j){
+  const r = j.report, li = [];
+  status(`<b class="ok">완료</b> — 문서 ${r.pages.toLocaleString()}개를 ${LABEL[j.dst]} 형식으로 만들었습니다 (${r.seconds}초)`, 100, "");
+  if (r.media) li.push(`미디어 파일 ${r.media.toLocaleString()}개를 함께 담았습니다.`);
+  for (const [k, v] of Object.entries(r.skipped || {})) li.push(`${esc(k)} ${v.toLocaleString()}개는 건너뛰었습니다.`);
+  if (r.raw) li.push(`<span class="warn">옮길 수 없는 문법이 ${r.raw.toLocaleString()}곳(문서 ${r.raw_pages.toLocaleString()}개)에 있어 원문 그대로 남겼습니다.</span>`);
+  if (r.media_missing_count) li.push(`<span class="warn">문서에는 있는데 파일을 찾지 못한 그림이 ${r.media_missing_count}개 있습니다.</span>` +
+    `<details><summary>목록 보기</summary>${r.media_missing.map(esc).join("<br>")}</details>`);
+  if (r.failed_count) li.push(`<span class="bad">변환 중 오류가 난 문서 ${r.failed_count}개는 원문 그대로 담았습니다.</span>` +
+    `<details><summary>목록 보기</summary>${r.failed.map(esc).join("<br>")}</details>`);
+  $("b-result").innerHTML = `<ul class="rep">${li.map(x => `<li>${x}</li>`).join("")}</ul>` +
+    `<a class="btn" href="/api/download?id=${id}">${esc(j.file)} 받기</a>` +
+    `<div class="hint" style="margin-top:10px">새 위키에 넣는 방법은 압축 파일 안의 <code>읽어 주세요.txt</code> 에 있습니다.</div>`;
+}
+</script>
+</body>
+</html>
