@@ -3,6 +3,20 @@
 도쿠위키 · 미디어위키 · 오픈나무(나무마크) · 마크다운 문법으로 쓰고, 서로 바꾸고, 위키 데이터를 통째로 옮기는 편집기입니다.
 **내 컴퓨터 안에서만** 돌고, 올린 파일은 어디로도 보내지 않습니다. 파이썬 표준 라이브러리만 씁니다(설치할 것 없음, Python 3.9 이상).
 
+## 화면
+
+**쓰면서 바로 확인** — 왼쪽 마크다운, 오른쪽 렌더링
+![마크다운과 렌더링을 나란히](src/docs/01-split-markdown-rendered.png)
+
+**같은 문서를 두 문법으로 실시간 변환** — 왼쪽 오픈나무, 오른쪽 도쿠위키(어느 쪽에서 써도 반대편이 따라옵니다)
+![오픈나무와 도쿠위키 실시간 변환](src/docs/02-live-convert-opennamu-dokuwiki.png)
+
+**패널마다 드롭박스로 선택** — 렌더링 / 마크다운 / 오픈나무 / 도쿠위키 / 미디어위키
+![패널 드롭박스](src/docs/03-dropdown.png)
+
+**대량 변환** — 위키 데이터를 통째로 다른 형식으로
+![대량 변환 창](src/docs/04-bulk-convert.png)
+
 ## 쓰는 법
 
 ### 편집기 (창 프로그램)
@@ -79,6 +93,7 @@ python src/cli.py guess 문서.txt
 - `bulk.py` — 대량 변환(입력 읽기, 그림 이름 바꾸기, 출력 쓰기)과 문서 변환·형식 짐작.
 - `cli.py` — 명령줄.
 - `editor.py` + `preview.py` + `위키나루.pyw` — 창 편집기(tkinter). `tools/` 는 아이콘·exe 만들기, `assets/` 는 아이콘. `preview.py` 는 공통 구조를 화면에 넣을 조각으로 바꾸는 순수 함수.
+- `docs/` — README 에 쓰는 화면 캡처.
 - `tests/` — `python src/tests/test_wikiconv.py`, `test_bulk.py`, `test_editor.py`.
 
 ## 출처·라이선스
