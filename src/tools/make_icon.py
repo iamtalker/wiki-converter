@@ -1,7 +1,7 @@
 """앱 아이콘(assets/icon.png, assets/icon.ico)을 코드로 그린다 — 표준 라이브러리만 사용.
 
 바이올렛 둥근 사각형 위에 흰 문서(접힌 모서리 + 글줄)와 연필. 256px 로 그려 16·32·48 로 줄인다.
-    python tools/make_icon.py
+    python src/tools/make_icon.py
 """
 import math
 import os

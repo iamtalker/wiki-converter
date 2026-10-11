@@ -6,7 +6,7 @@
 ## 쓰는 법
 
 ### 편집기 (창 프로그램)
-`위키편집기.exe` 를 더블클릭합니다(브라우저를 쓰지 않는 독립 창, 파이썬이 없어도 됩니다). 소스에서는 `위키편집기.pyw` 를 실행하세요. exe 는 `python tools/build_exe.py` 로 만듭니다(PyInstaller 필요, 아이콘은 `python tools/make_icon.py`).
+`위키편집기.exe` 를 더블클릭합니다(브라우저를 쓰지 않는 독립 창, 파이썬이 없어도 됩니다). 소스에서는 `src/위키편집기.pyw` 를 실행하세요. exe 는 `python src/tools/build_exe.py` 로 만듭니다(PyInstaller 필요, 아이콘은 `python src/tools/make_icon.py`).
 **듀얼 패널**: 왼쪽·오른쪽 패널 위에 각각 드롭박스(마크다운 / 렌더링 / 오픈나무 / 도쿠위키 / 미디어위키)가 있습니다. 문법을 고른 패널은 편집할 수 있고, 렌더링을 고른 패널은 읽기 전용 모양 보기입니다. 한쪽에서 쓰면 반대편이 150ms 안에 따라옵니다.
 예) 왼쪽 마크다운 + 오른쪽 렌더링 = 쓰면서 바로 보기 · 왼쪽 렌더링 + 오른쪽 마크다운 = 오른쪽에서 편집 · 왼쪽 오픈나무 + 오른쪽 마크다운 = 실시간 상호 변환(어느 쪽에서 써도 됩니다). **변환** 메뉴에서는 쓰던 글을 다른 문법으로 바꿔 복사하거나(이 문서는 그대로) 바꿔서 파일로 저장합니다.
 - **보기 모드**(툴바 오른쪽 토글 또는 보기 메뉴): **좌우 분할**(두 패널) · **렌더링만**(렌더링 결과를 크게) · **원문만**(원래 문법만 크게, 집중 편집).
@@ -17,7 +17,7 @@
 - `.md` 를 더블클릭으로 열고 싶으면 **도움말 → '열기 방법' 목록에 등록** 을 누른 뒤, 탐색기에서 `.md` 파일 → 연결 프로그램 → 다른 앱 선택 → 위키 편집기 → **항상** 을 고르세요(등록은 현재 사용자 범위에만 쓰고 기본 프로그램은 바꾸지 않습니다. 등록 해제도 같은 메뉴에 있습니다).
 - **변환 → 대량 변환…**(툴바 ⇄): 위키 데이터(zip·폴더·파일)를 통째로 다른 위키 형식의 zip 으로 바꿉니다. 아래 '대량 변환' 표와 같은 규칙이고, 변환은 백그라운드에서 돌아 창이 멈추지 않습니다.
 - 큰 글(4만 자 이상)은 변환을 별도 스레드에서 해서 타이핑이 끊기지 않습니다. 입력은 150ms 디바운스로 반대편 패널에 반영합니다.
-- 명령줄: `pythonw 위키편집기.pyw 문서.md`. 한글 윈도 메모장에서 쓰던 cp949 파일도 열고, 저장할 때 원래 인코딩과 줄바꿈(CRLF)을 지킵니다.
+- 명령줄: `pythonw src/위키편집기.pyw 문서.md`. 한글 윈도 메모장에서 쓰던 cp949 파일도 열고, 저장할 때 원래 인코딩과 줄바꿈(CRLF)을 지킵니다.
 
 ### 1. 문서 변환
 위키 문서를 붙여넣으면 고른 문법으로 바꿔 줍니다. 원본 형식은 자동으로 짐작하고(틀리면 직접 고르기), 옮기지 못해 원문으로 남긴 곳의 수를 알려 줍니다.
@@ -43,9 +43,9 @@
 
 ### 명령줄
 ```
-python cli.py text --to mediawiki 문서.txt          # 원본 형식은 자동 감지
-python cli.py bulk data.zip --from dokuwiki --to mediawiki
-python cli.py guess 문서.txt
+python src/cli.py text --to mediawiki 문서.txt          # 원본 형식은 자동 감지
+python src/cli.py bulk data.zip --from dokuwiki --to mediawiki
+python src/cli.py guess 문서.txt
 ```
 
 ## 정한 것 (이유와 함께)
@@ -71,11 +71,12 @@ python cli.py guess 문서.txt
 - 아주 큰 위키(문서 수십만 개)는 문서 본문을 한 번에 메모리에 올리는 도쿠위키 입력에서 메모리를 많이 쓸 수 있습니다.
 
 ## 구조
+- 맨 위 폴더: `위키편집기.exe`(빌드한 실행 파일, git 에는 넣지 않고 릴리즈로 배포), `README.md`, `LICENSE`. 나머지는 모두 `src/` 안에 있습니다.
 - `wikiconv/` — 문법 변환 코어. 어떤 문법이든 공통 구조(AST)로 읽고(`read`), 원하는 문법으로 씁니다(`write`). `anywiki-kit` 에서 가져왔습니다.
 - `bulk.py` — 대량 변환(입력 읽기, 그림 이름 바꾸기, 출력 쓰기)과 문서 변환·형식 짐작.
 - `cli.py` — 명령줄.
 - `editor.py` + `preview.py` + `위키편집기.pyw` — 창 편집기(tkinter). `tools/` 는 아이콘·exe 만들기, `assets/` 는 아이콘. `preview.py` 는 공통 구조를 화면에 넣을 조각으로 바꾸는 순수 함수.
-- `tests/` — `python tests/test_wikiconv.py`, `test_bulk.py`, `test_editor.py`.
+- `tests/` — `python src/tests/test_wikiconv.py`, `test_bulk.py`, `test_editor.py`.
 
 ## 출처·라이선스
 이 프로젝트는 [PolyForm Noncommercial License 1.0.0](LICENSE) 으로 공개합니다.
