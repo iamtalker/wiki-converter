@@ -132,7 +132,15 @@ def main():
         L, R = ed.panels
         # 기본: 왼쪽 마크다운(편집), 오른쪽 렌더링(읽기 전용)
         assert [p.mode for p in ed.panels] == ["markdown", "rendered"], [p.mode for p in ed.panels]
-        assert list(L.combo.cget("values")) == ["마크다운", "렌더링", "오픈나무(나무마크)", "도쿠위키", "미디어위키"]
+        # 드롭박스: 렌더링이 맨 위, 구분선, 그다음 문법들(좌우 순서가 같다) + 렌더링은 모양도 다르다
+        want = ["◉ 렌더링 (읽기 전용)", "─" * 16, "마크다운", "오픈나무(나무마크)", "도쿠위키", "미디어위키"]
+        assert list(L.combo.cget("values")) == want and list(R.combo.cget("values")) == want
+        assert R.combo.get() == want[0] and L.combo.get() == "마크다운"
+        assert str(R.combo.cget("style")) == str(L.combo.cget("style"))   # 색(스타일)으로 구별하지 않는다
+        L.combo.set("─" * 16)                      # 구분선을 고르면 원래대로
+        L.combo.event_generate("<<ComboboxSelected>>")
+        root.update()
+        assert L.mode == "markdown" and L.combo.get() == "마크다운"
         assert ed.src_fmt == "markdown" and ed.nl == "\r\n" and not ed.dirty
         assert "삼겹살" in L.get_text() and "삼겹살" in R.view.get("1.0", "end") and "• 하나" in R.view.get("1.0", "end")
         assert str(L.edit_frame) in str(L.edit_frame.pack_info()) or L.edit_frame.winfo_manager() == "pack"
@@ -363,9 +371,132 @@ def main():
         ed.flush()
         root.update()
         assert ed.status.cget("text")
+
+        # 외부 이미지: 기본으로 켜져 있고, 주소의 JPEG 를 내려받아 렌더링에 그림으로 보인다(끄면 안 보임)
+        import http.server
+        import socketserver
+        import struct
+        import threading
+        import zlib
+        imgdir = tempfile.mkdtemp()
+        w_, h_ = 800, 400
+        rows = b"".join(b"\x00" + b"".join(bytes([x * 255 // w_, y * 255 // h_, 90]) for x in range(w_))
+                        for y in range(h_))
+
+        def chunk(t, b):
+            return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xFFFFFFFF)
+        png_bytes = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w_, h_, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+        with open(os.path.join(imgdir, "x.png"), "wb") as f:
+            f.write(png_bytes)
+        editor.gdip_convert(os.path.join(imgdir, "x.png"), os.path.join(imgdir, "photo.jpg"), "jpeg")
+
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *a, **k):
+                super().__init__(*a, directory=imgdir, **k)
+
+            def log_message(self, *a):
+                pass
+        srv = socketserver.TCPServer(("127.0.0.1", 0), Quiet)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{srv.server_address[1]}/photo.jpg"
+        try:
+            assert ed.ext_images.get() is True                      # 기본값: 켜짐
+            pick(L, "마크다운")
+            pick(R, "◉ 렌더링 (읽기 전용)")
+            L.text.delete("1.0", "end")
+            L.text.insert("1.0", f"# 사진\n\n![대체 글]({url})\n")
+            root.update()
+            ed.flush()
+            deadline = time.time() + 20
+            while time.time() < deadline and not R.images:
+                root.update()
+                time.sleep(0.02)
+            assert len(R.images) == 1 and R.images[0].width() <= editor.IMG_MAX_W, R.images
+            assert ed.imgs[url][0] == "ok" and "[그림: 대체 글]" not in R.view.get("1.0", "end")
+            ed.ext_images.set(False)                                  # 끄면 글자 칩으로 돌아가고 안내가 뜬다
+            ed.toggle_ext_images()
+            root.update()
+            assert not R.images and "[그림: 대체 글]" in R.view.get("1.0", "end")
+            assert "외부 이미지 1개" in ed.status.cget("text")
+            assert editor.load_settings()["external_images"] is False
+            ed.ext_images.set(True)
+            ed.toggle_ext_images()
+            root.update()
+            assert len(R.images) == 1                                # 캐시가 있어 바로 보인다
+        finally:
+            srv.shutdown()
+        # 안 열리는 주소는 죽지 않고 이유를 알려 준다
+        bad = "http://127.0.0.1:9/없는그림.jpg"
+        L.text.delete("1.0", "end")
+        L.text.insert("1.0", f"![안됨]({bad})\n")
+        root.update()
+        ed.flush()
+        deadline = time.time() + 20
+        while time.time() < deadline and ed.imgs.get(bad, ("pending",))[0] == "pending":
+            root.update()
+            time.sleep(0.02)
+        root.update()
+        assert ed.imgs[bad][0] == "fail" and "불러오지 못했습니다" in ed.status.cget("text"), ed.status.cget("text")
+
+        # 파일을 열어도 내가 고른 패널 선택은 그대로이고, 저장은 파일 자신의 문법으로
+        pick(L, "도쿠위키")
+        pick(R, "◉ 렌더링 (읽기 전용)")
+        md_file = os.path.join(tmp, "문법유지.md")
+        with open(md_file, "w", encoding="utf-8") as f:
+            f.write("# 제목\n\n**굵게** 글\n")
+        ed.open_path(md_file, ask=False)
+        root.update()
+        assert [p.mode for p in ed.panels] == ["dokuwiki", "rendered"]
+        assert "====== 제목 ======" in L.get_text() and "**굵게**" in L.get_text()   # 도쿠위키로 바꿔 보여 줌
+        assert not ed.dirty
+        type_into(L, "\n덧붙임\n")
+        assert ed.dirty and ed.save()
+        content = open(md_file, encoding="utf-8").read()
+        assert "# 제목" in content and "덧붙임" in content and "======" not in content, content   # 파일은 마크다운 그대로
+        assert [p.mode for p in ed.panels] == ["dokuwiki", "rendered"]
+
+        # 껐다 켜도 기억할 것을 정해 두고 저장(창을 닫을 때와 같은 저장)
+        pick(L, "도쿠위키")
+        pick(R, "◉ 렌더링 (읽기 전용)")
+        ed.view_mode.set("split")
+        ed.apply_view_mode()
+        ed.zoom(2)
+        want_size = ed.size
+        root.deiconify()                      # 숨긴 창은 크기가 적용되지 않으므로 잠깐 보인다
+        root.geometry("980x620+40+30")
+        root.update()
+        ed.save_ui_state(window=True)
+        root.withdraw()
+        saved = editor.load_settings()
+        assert saved["left"] == "dokuwiki" and saved["right"] == "rendered" and saved["size"] == want_size, saved
+        assert saved["geometry"].startswith("980x620")
     finally:
         ed.dirty = False
         root.destroy()
+
+    # 프로그램을 다시 켠다: 패널 선택·글자 크기·창 크기가 그대로 돌아온다
+    root2, ed2 = editor.run_gui([], loop=False)
+    try:
+        root2.update()
+        assert [p.mode for p in ed2.panels] == ["dokuwiki", "rendered"], [p.mode for p in ed2.panels]
+        assert ed2.panels[0].combo.get() == "도쿠위키" and ed2.panels[1].combo.get().startswith("◉")
+        assert ed2.size == want_size
+        assert root2.geometry().startswith("980x620"), root2.geometry()
+        # 저장된 값이 이상해도 죽지 않고 기본값으로
+        ed2.dirty = False
+        editor.save_settings({"left": "엉뚱", "right": None, "geometry": "9999x9999+99999+99999", "size": "abc"})
+    finally:
+        root2.destroy()
+    editor.save_settings({"left": "엉뚱", "right": None, "geometry": "9999x9999+99999+99999", "size": 9999})
+    root3, ed3 = editor.run_gui([], loop=False)
+    try:
+        root3.withdraw()
+        root3.update()
+        assert [p.mode for p in ed3.panels] == ["markdown", "rendered"] and ed3.size == 28
+    finally:
+        ed3.dirty = False
+        root3.destroy()
     print("test_editor: 통과")
 
 

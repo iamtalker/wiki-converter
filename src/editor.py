@@ -28,9 +28,27 @@ OPEN_EXTS = (".md", ".markdown", ".txt")
 SYNTAXES = [("markdown", "마크다운"), ("dokuwiki", "도쿠위키"), ("mediawiki", "미디어위키"), ("opennamu", "오픈나무(나무마크)")]
 LABEL = dict(SYNTAXES)
 # 두 패널의 드롭박스 항목: 문법 4가지 + 렌더링(읽기 전용 모양 보기)
-MODES = [("markdown", "마크다운"), ("rendered", "렌더링"), ("opennamu", "오픈나무(나무마크)"), ("dokuwiki", "도쿠위키"),
+MODES = [("rendered", "렌더링"), ("markdown", "마크다운"), ("opennamu", "오픈나무(나무마크)"), ("dokuwiki", "도쿠위키"),
          ("mediawiki", "미디어위키")]
 MODE_LABEL = dict(MODES)
+COMBO_SEP = "─" * 16   # 렌더링과 문법 사이의 구분선(고를 수 없음)
+
+
+def combo_label(mode):
+    """드롭박스에 보이는 글: 렌더링은 ◉ 표시와 '읽기 전용'을 붙여 문법들과 구별한다."""
+    return "◉ 렌더링 (읽기 전용)" if mode == "rendered" else MODE_LABEL[mode]
+
+
+COMBO_VALUES = [combo_label("rendered"), COMBO_SEP] + [MODE_LABEL[k] for k, _ in MODES if k != "rendered"]
+
+
+def mode_from_label(text):
+    """드롭박스 글 → 모드(구분선이면 None). 예전 글('렌더링')도 받는다."""
+    if text == COMBO_SEP:
+        return None
+    if text.startswith("◉") or text == "렌더링":
+        return "rendered"
+    return next(k for k, v in MODES if v == text)
 DEBOUNCE_MS = 150
 EXT ={"markdown": ".md", "dokuwiki": ".txt", "mediawiki": ".wiki", "opennamu": ".txt"}
 FILETYPES = [("위키·마크다운 문서", "*.md *.markdown *.txt *.wiki"), ("모든 파일", "*.*")]
@@ -65,6 +83,115 @@ def detect_format(text, path=""):
     if os.path.splitext(path)[1].lower() in (".md", ".markdown"):
         return "markdown"
     return fmt or "markdown"
+
+
+IMG_MAX_W = 520                       # 렌더링 창에 보이는 그림의 최대 너비(픽셀)
+IMG_MAX_BYTES = 20 * 1024 * 1024      # 외부 그림 하나의 최대 크기
+IMG_CLSID = {"png": "557cf406-1a04-11d3-9a73-0000f81ef32e", "jpeg": "557cf401-1a04-11d3-9a73-0000f81ef32e"}
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def gdip_convert(src, dst, kind="png", max_w=None):
+    """윈도 GDI+ 로 JPEG·PNG·GIF·BMP 그림을 읽어 PNG(또는 JPEG)로 저장한다(너비가 max_w 보다 크면 줄임). ctypes 만 사용.
+    tkinter 는 JPEG 를 못 읽어서, 화면에 보이려면 PNG 로 바꿔야 한다."""
+    import ctypes
+    import uuid
+    if sys.platform != "win32":
+        raise OSError("이 운영체제에서는 PNG·GIF 그림만 볼 수 있습니다")
+    gdip = ctypes.WinDLL("gdiplus")
+    vp, cu = ctypes.c_void_p, ctypes.c_uint
+    gdip.GdipLoadImageFromFile.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(vp)]
+    gdip.GdipGetImageWidth.argtypes = [vp, ctypes.POINTER(cu)]
+    gdip.GdipGetImageHeight.argtypes = [vp, ctypes.POINTER(cu)]
+    gdip.GdipGetImageThumbnail.argtypes = [vp, cu, cu, ctypes.POINTER(vp), vp, vp]
+    gdip.GdipSaveImageToFile.argtypes = [vp, ctypes.c_wchar_p, ctypes.c_char_p, vp]
+    gdip.GdipDisposeImage.argtypes = [vp]
+    gdip.GdiplusShutdown.argtypes = [ctypes.c_size_t]
+
+    class StartupInput(ctypes.Structure):
+        _fields_ = [("GdiplusVersion", ctypes.c_uint32), ("DebugEventCallback", vp),
+                    ("SuppressBackgroundThread", ctypes.c_int), ("SuppressExternalCodecs", ctypes.c_int)]
+    token = ctypes.c_size_t()
+    if gdip.GdiplusStartup(ctypes.byref(token), ctypes.byref(StartupInput(1, None, 0, 0)), None) != 0:
+        raise OSError("그림 라이브러리를 시작하지 못했습니다")
+    img, thumb = vp(), vp()
+    try:
+        if gdip.GdipLoadImageFromFile(src, ctypes.byref(img)) != 0 or not img.value:
+            raise OSError("그림을 읽지 못했습니다(지원하지 않는 형식이거나 깨진 파일)")
+        w, h = cu(), cu()
+        gdip.GdipGetImageWidth(img, ctypes.byref(w))
+        gdip.GdipGetImageHeight(img, ctypes.byref(h))
+        target = img
+        if max_w and w.value > max_w:
+            if gdip.GdipGetImageThumbnail(img, max_w, max(1, h.value * max_w // w.value), ctypes.byref(thumb),
+                                          None, None) == 0:
+                target = thumb
+        if gdip.GdipSaveImageToFile(target, dst, uuid.UUID(IMG_CLSID[kind]).bytes_le, None) != 0:
+            raise OSError("그림을 저장하지 못했습니다")
+    finally:
+        if thumb.value:
+            gdip.GdipDisposeImage(thumb)
+        if img.value:
+            gdip.GdipDisposeImage(img)
+        gdip.GdiplusShutdown(token.value)
+
+
+def image_cache_dir():
+    import tempfile
+    d = os.path.join(tempfile.gettempdir(), "wikinaru-img")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def fetch_image(url, cache_dir=None, max_w=IMG_MAX_W, timeout=12):
+    """http(s) 주소의 그림을 내려받아 화면에 쓸 PNG 파일 경로를 돌려준다(캐시). 실패하면 OSError 등을 던진다."""
+    import hashlib
+    import urllib.parse
+    import urllib.request
+    if not re.match(r"(?i)^https?://", url):
+        raise ValueError("http·https 주소만 불러옵니다")
+    cache_dir = cache_dir or image_cache_dir()
+    os.makedirs(cache_dir, exist_ok=True)
+    key = hashlib.sha1(url.encode("utf-8")).hexdigest()[:20]
+    out = os.path.join(cache_dir, key + ".png")
+    if os.path.isfile(out):
+        return out
+    u = urllib.parse.urlsplit(url)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (WikiNaru)", "Accept": "image/*,*/*;q=0.8",
+                                               "Referer": f"{u.scheme}://{u.netloc}/"})   # 그림 서버가 막지 않게
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read(IMG_MAX_BYTES + 1)
+    if not data:
+        raise OSError("빈 응답입니다")
+    if len(data) > IMG_MAX_BYTES:
+        raise OSError("그림이 너무 큽니다(20MB 초과)")
+    raw = os.path.join(cache_dir, key + ".raw")
+    with open(raw, "wb") as f:
+        f.write(data)
+    try:
+        if sys.platform == "win32":
+            gdip_convert(raw, out, "png", max_w)
+        elif data[:8] == PNG_SIG:
+            os.replace(raw, out)
+        else:
+            raise OSError("이 운영체제에서는 PNG·GIF 그림만 볼 수 있습니다")
+    finally:
+        if os.path.exists(raw):
+            os.remove(raw)
+    return out
+
+
+def local_image_png(path, cache_dir=None, max_w=IMG_MAX_W):
+    """JPEG·BMP 같은 파일 그림을 화면에 쓸 PNG 로(캐시)."""
+    import hashlib
+    cache_dir = cache_dir or image_cache_dir()
+    os.makedirs(cache_dir, exist_ok=True)
+    st = os.stat(path)
+    key = hashlib.sha1(f"{os.path.abspath(path)}|{st.st_mtime_ns}|{st.st_size}".encode("utf-8")).hexdigest()[:20]
+    out = os.path.join(cache_dir, key + ".png")
+    if not os.path.isfile(out):
+        gdip_convert(path, out, "png", max_w)
+    return out
 
 
 def find_note(base_dir, page, depth=3):
@@ -314,7 +441,8 @@ def run_gui(argv=None, loop=True):
             self.frame = tk.Frame(parent, bg=C["bg"])
             head = tk.Frame(self.frame, bg=C["bg"], padx=8, pady=6)
             head.pack(side="top", fill="x")
-            self.combo = ttk.Combobox(head, state="readonly", width=20, font=(ed.ui, 10), values=[v for _, v in MODES])
+            self.combo = ttk.Combobox(head, state="readonly", width=22, font=(ed.ui, 10), values=COMBO_VALUES,
+                                      postcommand=self.style_popdown)
             self.combo.pack(side="left")
             self.badge = tk.Label(head, text="", font=(ed.ui, 9), fg=C["muted"], bg=C["bg"])
             self.badge.pack(side="left", padx=10)
@@ -348,8 +476,20 @@ def run_gui(argv=None, loop=True):
             self.edit_frame.pack_forget()
             self.view_frame.pack_forget()
             (self.edit_frame if self.editable() else self.view_frame).pack(fill="both", expand=True)
-            self.combo.set(MODE_LABEL[self.mode])
+            self.combo.set(combo_label(self.mode))
             self.badge.config(text="편집" if self.editable() else "읽기 전용")
+
+        def style_popdown(self):
+            """펼친 목록에서 구분선은 흐리게(목록이 열린 직후에 적용). 색으로 강조하지 않는다."""
+            def apply():
+                try:
+                    pop = self.combo.tk.call("ttk::combobox::PopdownWindow", str(self.combo))
+                    lb = f"{pop}.f.l"
+                    self.combo.tk.call(lb, "itemconfigure", 1, "-foreground", C["line"], "-background", C["card"],
+                                       "-selectbackground", C["card"], "-selectforeground", C["line"])
+                except Exception:   # 목록 위젯 구조가 다른 Tk 에서는 표시만 생략
+                    pass
+            self.combo.after(1, apply)
 
     class BulkDialog:
         """파일 > 대량 변환…: 위키 데이터(zip·폴더·파일)를 통째로 다른 위키 형식의 zip 으로."""
@@ -554,14 +694,17 @@ def run_gui(argv=None, loop=True):
         def __init__(self, root, path=None):
             self.root = root
             self.path, self.enc, self.nl = None, "utf-8", "\n"
+            self.file_fmt = None   # 파일 자신의 문법(열 때 짐작). 저장은 패널 선택과 상관없이 이 문법으로
             self.src_text, self.src_fmt = "", "markdown"      # 문서의 기준 글(마지막으로 쓴 패널의 글)과 그 문법
             self.saved_text, self.saved_fmt, self.dirty = "", "markdown", False
             self.after_id, self.pending = None, None
             self._c = {"key": None, "segs": [], "raw": 0, "out": {}}
             self.raw, self.gen = 0, 0
+            self.imgs, self.skipped_urls = {}, set()    # 외부 그림 상태(주소 → ("pending",) · ("ok", PNG 경로) · ("fail", 이유))
+            self.img_results = queue.Queue()
             self.jobs, self.results = queue.Queue(), queue.Queue()
             self.polling = False
-            self.size = 11
+            self.size = max(7, min(28, int(load_settings().get("size", 11) or 11)))
             self.active = None
             fams = set(tkfont.families())
             self.ui = next((f for f in ("맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR") if f in fams),
@@ -608,11 +751,17 @@ def run_gui(argv=None, loop=True):
         # ------------------------------------------------ 화면
         def build(self):
             r = self.root
-            r.geometry("1240x740")
-            r.configure(bg=C["bg"])
             st = load_settings()
+            r.geometry(self.saved_geometry(st))
+            if st.get("zoomed"):
+                try:
+                    r.state("zoomed")
+                except tk.TclError:
+                    pass
+            r.configure(bg=C["bg"])
             self.fmt_var = tk.StringVar(value=self.src_fmt)
             self.show_sidebar = tk.BooleanVar(value=bool(st.get("sidebar", True)))
+            self.ext_images = tk.BooleanVar(value=bool(st.get("external_images", True)))
             self.view_mode = tk.StringVar(value=st.get("view") if st.get("view") in ("split", "preview", "source")
                                           else "split")
             self.build_style()
@@ -714,6 +863,8 @@ def run_gui(argv=None, loop=True):
                 v.add_radiobutton(label=name, value=val, variable=self.view_mode, command=self.apply_view_mode)
             v.add_separator()
             v.add_checkbutton(label="문법 해설 사이드바", variable=self.show_sidebar, command=self.toggle_sidebar)
+            v.add_checkbutton(label="외부 이미지 불러오기 (그림 주소에 접속)", variable=self.ext_images,
+                              command=self.toggle_ext_images)
             v.add_command(label="글자 크게", accelerator="Ctrl++", command=lambda: self.zoom(1))
             v.add_command(label="글자 작게", accelerator="Ctrl+-", command=lambda: self.zoom(-1))
             menu.add_cascade(label="보기", menu=v)
@@ -1000,12 +1151,12 @@ def run_gui(argv=None, loop=True):
             v.tag_configure("sub", offset=-3, font=f["small"])
             v.tag_configure("code", font=f["mono"], background=C["code"])
             v.tag_configure("codeblock", font=f["mono"], background=C["code"], lmargin1=8, lmargin2=8)
-            v.tag_configure("math", font=f["mono"], foreground=C["accent"])
+            v.tag_configure("math", font=f["mono"])
             v.tag_configure("raw", font=f["mono"], foreground=C["muted"], background="#fef3c7")
             v.tag_configure("chip", foreground="#92400e", background="#fef3c7")
             v.tag_configure("muted", foreground=C["muted"])
-            v.tag_configure("link", foreground=C["accent"], underline=True)
-            v.tag_configure("fnref", foreground=C["accent"])
+            v.tag_configure("link", underline=True)
+            v.tag_configure("fnref")
             v.tag_configure("quote", foreground=C["muted"])
             v.tag_configure("hr", foreground=C["line"])
             for n in range(1, 7):
@@ -1021,6 +1172,7 @@ def run_gui(argv=None, loop=True):
 
         def zoom(self, d):
             self.size = max(7, min(28, self.size + d))
+            self.save_ui_state()
             self.make_fonts()
             for p in self.panels:
                 p.text.config(font=(self.mono, self.size))
@@ -1084,8 +1236,40 @@ def run_gui(argv=None, loop=True):
                 self.active = p
                 self.fill_sidebar()
 
+        def saved_geometry(self, st):
+            """저장해 둔 창 크기·위치. 화면 밖이거나 너무 작으면 기본값."""
+            g = st.get("geometry")
+            m = re.fullmatch(r"(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)", g) if isinstance(g, str) else None
+            if m:
+                w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+                if w >= 600 and h >= 400 and w <= sw + 20 and h <= sh + 20 and -w + 120 < x < sw - 120 and -20 < y < sh - 80:
+                    return g
+            return "1240x740"
+
+        def save_ui_state(self, window=False):
+            """패널 선택(좌·우)·보기 모드·사이드바·글자 크기를 저장한다(window=True 면 창 크기·위치도)."""
+            s = load_settings()
+            s["left"], s["right"] = self.panels[0].mode, self.panels[1].mode
+            s["view"] = self.view_mode.get()
+            s["sidebar"] = bool(self.show_sidebar.get())
+            s["size"] = self.size
+            s["external_images"] = bool(self.ext_images.get())
+            if window:
+                try:
+                    zoomed = self.root.state() == "zoomed"
+                    s["zoomed"] = zoomed
+                    if not zoomed:
+                        s["geometry"] = self.root.geometry()
+                except tk.TclError:
+                    pass
+            save_settings(s)
+
         def pick_mode(self, p):
-            mode = next(k for k, v in MODES if v == p.combo.get())
+            mode = mode_from_label(p.combo.get())
+            if mode is None:                      # 구분선을 골랐으면 원래대로
+                p.combo.set(combo_label(p.mode))
+                return
             self.set_mode(p, mode)
 
         def set_mode(self, p, mode):
@@ -1100,10 +1284,7 @@ def run_gui(argv=None, loop=True):
             elif self.active is p:
                 self.active = self.panel
             self.fill_sidebar()
-            s = load_settings()
-            s["left"], s["right"] = self.panels[0].mode, self.panels[1].mode
-            s["view"] = self.view_mode.get()
-            save_settings(s)
+            self.save_ui_state()
             self.update_status()
             if p.editable():
                 p.text.focus_set()
@@ -1203,6 +1384,7 @@ def run_gui(argv=None, loop=True):
                 self.polling = False
 
         def apply_views(self, skip=None):
+            self.skipped_urls = set()
             for p in self.panels:
                 if p is not skip:
                     self.render_panel(p)
@@ -1254,26 +1436,91 @@ def run_gui(argv=None, loop=True):
             v.yview_moveto(top)
 
         def show_image(self, p, src):
-            """같은 폴더에 있는 png·gif 그림이면 그림으로 보여 준다(그 밖은 글자 칩)."""
-            if not self.path or re.match(r"(?i)^[a-z][a-z0-9+.-]*:", src) or \
-                    os.path.splitext(src)[1].lower() not in (".png", ".gif"):
+            """그림으로 보여 준다: 같은 폴더의 그림 파일, 또는 http(s) 외부 주소(옵션). 안 되면 글자 칩으로 남는다."""
+            if re.match(r"(?i)^https?://", src):
+                path = self.remote_image(src)
+            elif not self.path or re.match(r"(?i)^[a-z][a-z0-9+.-]*:", src):
                 return False
-            base = os.path.dirname(self.path)
-            cand = os.path.join(base, src.replace("/", os.sep))
-            if not os.path.isfile(cand):
-                cand = os.path.join(base, os.path.basename(src))
-            if not os.path.isfile(cand):
+            else:
+                base = os.path.dirname(self.path)
+                path = os.path.join(base, src.replace("/", os.sep))
+                if not os.path.isfile(path):
+                    path = os.path.join(base, os.path.basename(src))
+                if not os.path.isfile(path):
+                    return False
+                ext = os.path.splitext(path)[1].lower()
+                if ext not in (".png", ".gif"):
+                    if ext not in (".jpg", ".jpeg", ".bmp", ".tif", ".tiff"):
+                        return False
+                    try:
+                        path = local_image_png(path)       # tkinter 가 못 읽는 형식은 PNG 로 바꿔서
+                    except OSError:
+                        return False
+            if not path:
                 return False
             try:
-                img = tk.PhotoImage(file=cand)
+                img = tk.PhotoImage(file=path)
                 w = img.width()
-                if w > 520:
-                    img = img.subsample(math.ceil(w / 520))
+                if w > IMG_MAX_W:
+                    img = img.subsample(math.ceil(w / IMG_MAX_W))
             except tk.TclError:
                 return False
             p.images.append(img)
             p.view.image_create("end", image=img)
             return True
+
+        # ---- 외부 이미지: 백그라운드에서 내려받고, 끝나면 렌더링 창만 다시 그린다
+        def remote_image(self, url):
+            if not self.ext_images.get():
+                self.skipped_urls.add(url)
+                return None
+            st = self.imgs.get(url)
+            if st is None:
+                self.imgs[url] = ("pending",)
+
+                def job():
+                    try:
+                        self.img_results.put((url, "ok", fetch_image(url)))
+                    except Exception as e:  # noqa: BLE001  (연결 실패·시간 초과·형식 오류 …)
+                        self.img_results.put((url, "fail", str(getattr(e, "reason", None) or e)))
+                threading.Thread(target=job, daemon=True).start()
+                self.root.after(120, self.poll_images)
+                return None
+            return st[1] if st[0] == "ok" else None
+
+        def poll_images(self):
+            changed, failed = False, []
+            try:
+                while True:
+                    url, kind, val = self.img_results.get_nowait()
+                    self.imgs[url] = (kind, val)
+                    changed = True
+                    if kind == "fail":
+                        failed.append((url, val))
+            except queue.Empty:
+                pass
+            if changed:
+                self.skipped_urls = set()
+                for p in self.panels:
+                    if not p.editable():
+                        self.render_view(p, self._c["segs"])
+                self.update_status()
+                if failed:
+                    short = failed[0][0] if len(failed[0][0]) < 60 else failed[0][0][:57] + "…"
+                    self.update_status(f"그림을 불러오지 못했습니다: {short} ({failed[0][1]})"
+                                       + (f" 외 {len(failed) - 1}개" if len(failed) > 1 else ""))
+            if any(v[0] == "pending" for v in self.imgs.values()):
+                self.root.after(150, self.poll_images)
+
+        def toggle_ext_images(self):
+            self.save_ui_state()
+            if self.ext_images.get():      # 켰으니 예전에 실패한 것도 다시 시도
+                self.imgs = {u: v for u, v in self.imgs.items() if v[0] == "ok"}
+            self.skipped_urls = set()
+            for p in self.panels:
+                if not p.editable():
+                    self.render_view(p, self._c["segs"])
+            self.update_status()
 
         def on_view_click(self, p, e):
             idx = p.view.index(f"@{e.x},{e.y}")
@@ -1300,6 +1547,8 @@ def run_gui(argv=None, loop=True):
             """글은 그대로 두고 이 글의 문법을 다르게 읽는다."""
             self.flush()
             self.src_fmt = self.fmt_var.get()
+            if self.path:
+                self.file_fmt = self.src_fmt
             self.dirty = (self.src_text != self.saved_text) or (self.src_fmt != self.saved_fmt)
             self.update_all()
 
@@ -1319,25 +1568,24 @@ def run_gui(argv=None, loop=True):
             s += f"{len(self.src_text):,}자  ·  원본 문법 {LABEL[self.src_fmt]}"
             if self.raw:
                 s += f"  ·  옮길 수 없어 원문으로 남긴 곳 {self.raw}곳"
+            pending = sum(1 for v in self.imgs.values() if v[0] == "pending")
+            if pending:
+                s += f"  ·  그림 {pending}개 불러오는 중…"
+            if self.skipped_urls:
+                s += f"  ·  외부 이미지 {len(self.skipped_urls)}개는 꺼져 있어 안 보입니다(보기 → 외부 이미지 불러오기)"
             self.status.config(text=msg or s)
 
         # ------------------------------------------------ 파일
         def load(self, text, fmt, path):
-            """문서를 통째로 바꾼다. 왼쪽 패널은 그 문서의 문법으로(오른쪽이 같은 문법이면 렌더링으로)."""
+            """문서를 통째로 바꾼다. 패널 선택(드롭박스)은 사용자가 고른 그대로 둔다."""
             if self.after_id:
                 self.root.after_cancel(self.after_id)
                 self.after_id = self.pending = None
             self.src_text, self.src_fmt, self.path = text, fmt, path
+            self.file_fmt = fmt if path else None
             self.saved_text, self.saved_fmt, self.dirty = text, fmt, False
             self._c["key"] = None
             self.fmt_var.set(fmt)
-            left, right = self.panels
-            if left.mode != fmt and fmt in dict(SYNTAXES):
-                left.mode = fmt
-                left.show()
-            if right.mode == left.mode:
-                right.mode = "rendered"
-                right.show()
             for p in self.panels:
                 if p.editable():
                     p.last_text = None
@@ -1389,25 +1637,29 @@ def run_gui(argv=None, loop=True):
 
         def save_as(self):
             self.flush()
-            p = filedialog.asksaveasfilename(defaultextension=EXT[self.src_fmt], filetypes=FILETYPES,
+            p = filedialog.asksaveasfilename(defaultextension=EXT[self.file_fmt or self.src_fmt], filetypes=FILETYPES,
                                              initialfile=os.path.basename(self.path) if self.path else "")
             return self.write(p) if p else False
 
         def write(self, path):
+            fmt = self.file_fmt or self.src_fmt          # 파일은 자기 문법으로 저장(패널이 다른 문법이어도)
             try:
+                text = self.converted(fmt)[0]
                 with open(path, "wb") as f:
-                    f.write(encode_file(self.src_text, self.enc, self.nl))
+                    f.write(encode_file(text, self.enc, self.nl))
             except OSError as e:
                 messagebox.showerror(APP, f"저장하지 못했습니다:\n{e}")
                 return False
             self.path = os.path.abspath(path)
+            self.file_fmt = fmt
             self.saved_text, self.saved_fmt, self.dirty = self.src_text, self.src_fmt, False
             self.update_title()
-            self.update_status(f"저장했습니다 ({LABEL[self.src_fmt]} 문법)")
+            self.update_status(f"저장했습니다 ({LABEL[fmt]} 문법)")
             return True
 
         def quit(self):
             if self.confirm_discard():
+                self.save_ui_state(window=True)
                 self.root.destroy()
 
         # ------------------------------------------------ 복사·내보내기 (이 문서는 그대로)
