@@ -777,7 +777,7 @@ def run_gui(argv=None, loop=True):
             rm = st.get("right") if st.get("right") in MODE_LABEL else "rendered"
             self.panels = [Panel(self, self.pane, lm), Panel(self, self.pane, rm)]
             if self.show_sidebar.get():
-                self.pane.add(self.sidebar, minsize=190, width=270, stretch="never")
+                self.pane.add(self.sidebar, minsize=230, width=330, stretch="never")
             for p in self.panels:
                 p.show()
                 p.combo.bind("<<ComboboxSelected>>", lambda e, p=p: self.pick_mode(p))
@@ -890,15 +890,15 @@ def run_gui(argv=None, loop=True):
             return self.bulk
 
         def build_sidebar(self):
-            self.sidebar = tk.Frame(self.pane, width=270, bg=C["card"])
+            self.sidebar = tk.Frame(self.pane, width=330, bg=C["card"])
             self.side_title = tk.Label(self.sidebar, text="문법 해설", anchor="w", font=(self.ui, 10, "bold"), padx=12,
                                        bg=C["card"], fg=C["text"])
             self.side_title.pack(fill="x", pady=(10, 4))
             self.tree = ttk.Treeview(self.sidebar, columns=("name",), style="Syntax.Treeview", selectmode="none")
             self.tree.heading("#0", text="문법")
             self.tree.heading("name", text="해설")
-            self.tree.column("#0", width=150, minwidth=80, stretch=True)
-            self.tree.column("name", width=90, minwidth=60, stretch=False)
+            self.tree.column("#0", width=205, minwidth=100, stretch=True)
+            self.tree.column("name", width=95, minwidth=60, stretch=False)
             tsb = tk.Scrollbar(self.sidebar, command=self.tree.yview)
             self.tree.config(yscrollcommand=tsb.set)
             tsb.pack(side="right", fill="y", pady=4)
@@ -1188,7 +1188,7 @@ def run_gui(argv=None, loop=True):
         def toggle_sidebar(self):
             if self.show_sidebar.get():
                 first = self.visible_panels()
-                self.pane.add(self.sidebar, before=first[0].frame if first else None, minsize=190, width=270,
+                self.pane.add(self.sidebar, before=first[0].frame if first else None, minsize=230, width=330,
                               stretch="never")
             else:
                 self.pane.forget(self.sidebar)
