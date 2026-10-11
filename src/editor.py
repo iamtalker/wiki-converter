@@ -1,6 +1,6 @@
-"""위키 편집기 — 위키 문법으로 쓰면서 옆에서 바로 보고, 다른 문법으로 바꿔 저장하는 창 프로그램(표준 라이브러리 tkinter).
+"""위키나루 — 위키 문법으로 쓰면서 옆에서 바로 보고, 다른 문법으로 바꿔 저장하는 창 프로그램(표준 라이브러리 tkinter).
 
-    pythonw 위키편집기.pyw [파일]      (콘솔 창 없이)      또는   python editor.py [파일]
+    pythonw 위키나루.pyw [파일]      (콘솔 창 없이)      또는   python editor.py [파일]
 """
 import json
 import math
@@ -20,9 +20,9 @@ import preview  # noqa: E402
 import wikiconv  # noqa: E402
 from wikiconv.markdown import md_name  # noqa: E402
 
-APP = "위키 편집기"
-PROG_ID = "WikiEditor.App"
-OLD_PROG_IDS = ("WikiConverter.Editor",)   # 예전 이름으로 등록돼 있던 것(등록·해제할 때 같이 정리)
+APP = "위키나루"
+PROG_ID = "WikiNaru.App"
+OLD_PROG_IDS = ("WikiEditor.App", "WikiConverter.Editor")   # 예전 이름으로 등록돼 있던 것(등록·해제할 때 같이 정리)
 CLASSES = r"Software\Classes"
 OPEN_EXTS = (".md", ".markdown", ".txt")
 SYNTAXES = [("markdown", "마크다운"), ("dokuwiki", "도쿠위키"), ("mediawiki", "미디어위키"), ("opennamu", "오픈나무(나무마크)")]
@@ -203,16 +203,25 @@ def default_bulk_out(path, dst):
 
 
 # 편집기 설정(사이드바 켜고 끄기 등) — 사용자 폴더에 작은 JSON 하나
-SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".wiki-editor.json")
+SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".wiki-naru.json")
+
+
+DEFAULT_SETTINGS_PATH = SETTINGS_PATH
+LEGACY_SETTINGS = (".wiki-editor.json", ".wiki-converter-editor.json")   # 예전 이름의 설정 파일
 
 
 def load_settings():
-    try:
-        with open(SETTINGS_PATH, encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    paths = [SETTINGS_PATH]
+    if SETTINGS_PATH == DEFAULT_SETTINGS_PATH:   # 기본 위치일 때만 예전 설정 파일을 이어받는다
+        paths += [os.path.join(os.path.expanduser("~"), n) for n in LEGACY_SETTINGS]
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            continue
+    return {}
 
 
 def save_settings(d):
@@ -236,7 +245,7 @@ def launcher_command():
         w = os.path.join(os.path.dirname(exe), "pythonw.exe")
         if os.path.exists(w):
             exe = w
-    return f'"{exe}" "{os.path.join(HERE, "위키편집기.pyw")}" "%1"'
+    return f'"{exe}" "{os.path.join(HERE, "위키나루.pyw")}" "%1"'
 
 
 def _drop_progids(winreg, root, ids):

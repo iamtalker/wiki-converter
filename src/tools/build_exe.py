@@ -1,7 +1,7 @@
-"""위키 편집기를 파이썬 없이 도는 단독 exe(위키편집기.exe)로 묶는다 — PyInstaller 가 설치돼 있어야 한다.
+"""위키나루를 파이썬 없이 도는 단독 exe(위키나루.exe)로 묶는다 — PyInstaller 가 설치돼 있어야 한다.
 
     python src/tools/make_icon.py     # 아이콘이 없으면 먼저
-    python src/tools/build_exe.py     # → 프로젝트 맨 위 폴더에 위키편집기.exe
+    python src/tools/build_exe.py     # → 프로젝트 맨 위 폴더에 위키나루.exe
 """
 import os
 import shutil
@@ -25,12 +25,12 @@ def main():
     work = tempfile.mkdtemp(prefix="wikiedit-build-")
     try:
         subprocess.check_call([
-            sys.executable, "-m", "PyInstaller", "--noconfirm", "--onefile", "--windowed", "--name", "WikiEditor",
+            sys.executable, "-m", "PyInstaller", "--noconfirm", "--onefile", "--windowed", "--name", "WikiNaru",
             "--icon", icon, "--add-data", os.path.join(HERE, "assets") + os.pathsep + "assets",
             "--workpath", os.path.join(work, "build"), "--specpath", work, "--distpath", os.path.join(work, "dist"),
-            os.path.join(HERE, "위키편집기.pyw")])
-        out = os.path.join(ROOT, "위키편집기.exe")
-        shutil.copyfile(os.path.join(work, "dist", "WikiEditor.exe"), out)
+            os.path.join(HERE, "위키나루.pyw")])
+        out = os.path.join(ROOT, "위키나루.exe")
+        shutil.copyfile(os.path.join(work, "dist", "WikiNaru.exe"), out)
         print("만들었습니다:", out)
     finally:
         shutil.rmtree(work, ignore_errors=True)

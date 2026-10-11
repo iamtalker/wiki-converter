@@ -45,7 +45,7 @@ def main():
     assert editor.detect_format("====== 제목 ======\n**굵게** //기울임//", "a.txt") == "dokuwiki"
     assert editor.detect_format("그냥 글", "a.txt") == "markdown"
     cmd = editor.launcher_command()
-    assert cmd.startswith('"') and cmd.endswith('"%1"') and "위키편집기.pyw" in cmd, cmd
+    assert cmd.startswith('"') and cmd.endswith('"%1"') and "위키나루.pyw" in cmd, cmd
 
     # --- 서식 도구(순수 함수)
     assert editor.wrap_text("글", "**", "**", "굵은 글") == ("**글**", 2, 3)

@@ -600,7 +600,7 @@ OPENNAMU_SCHEMA = [
     "create table yourwiki_pack (k text primary key, v text)",
 ]
 CAT_RE = re.compile(r"\[\[분류:([^\]|#]+)")
-CREATOR = "위키 편집기"
+CREATOR = "위키나루"
 
 
 def _zinfo(name, modified):
@@ -630,7 +630,7 @@ def _id_path(pid, fnencode="url"):
 
 
 def _readme(dst, n, has_media):
-    head = f"위키 편집기로 만든 {LABEL[dst]} 데이터입니다. 문서 {n:,}개(문서마다 최신 판만 옮김)."
+    head = f"위키나루로 만든 {LABEL[dst]} 데이터입니다. 문서 {n:,}개(문서마다 최신 판만 옮김)."
     how = {
         "dokuwiki": "1. 이 압축 파일의 data/ 폴더를 도쿠위키 폴더에 덮어 풉니다.\n"
                     "2. 검색 색인을 만드세요: php bin/indexer.php\n"
@@ -685,7 +685,7 @@ def write_mediawiki(pages, media, out):
     n = 0
     with open(tmp, "w", encoding="utf-8") as f:
         f.write('<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" version="0.11" xml:lang="ko">\n'
-                "<siteinfo><sitename>위키 편집기</sitename><case>first-letter</case></siteinfo>\n")
+                "<siteinfo><sitename>위키나루</sitename><case>first-letter</case></siteinfo>\n")
         for p in pages:
             t = mw_title(p.title)
             ns = 14 if t.startswith("Category:") else 10 if t.startswith("Template:") else 0

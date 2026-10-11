@@ -1,4 +1,4 @@
-"""위키 편집기 — 명령줄 변환 (표준 라이브러리만 사용).
+"""위키나루 — 명령줄 변환 (표준 라이브러리만 사용).
 
     python cli.py text --from dokuwiki --to mediawiki 문서.txt        # 파일(없으면 표준 입력)을 바꿔 표준 출력으로
     python cli.py bulk data.zip --from dokuwiki --to mediawiki        # 통째로 바꿔 zip 으로
@@ -21,7 +21,7 @@ def read_in(path):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="위키 편집기")
+    ap = argparse.ArgumentParser(description="위키나루")
     sub = ap.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("text", help="문서 하나 변환")
     t.add_argument("file", nargs="?", default="-")
