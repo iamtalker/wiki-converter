@@ -22,9 +22,10 @@ from wikiconv.markdown import md_name  # noqa: E402
 
 APP = "위키나루"
 PROG_ID = "WikiNaru.App"
-OLD_PROG_IDS = ("WikiEditor.App", "WikiConverter.Editor")   # 예전 이름으로 등록돼 있던 것(등록·해제할 때 같이 정리)
+OLD_PROG_IDS = ("WikiEditor.App", "WikiConverter.Editor")   # 예전 이름으로 등록돼 있던 것(시작할 때 정리)
 CLASSES = r"Software\Classes"
 OPEN_EXTS = (".md", ".markdown", ".txt")
+FILEEXTS = r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts"   # 윈도가 기록하는 '기본 앱' 선택(읽기만 한다)
 SYNTAXES = [("markdown", "마크다운"), ("dokuwiki", "도쿠위키"), ("mediawiki", "미디어위키"), ("opennamu", "오픈나무(나무마크)")]
 LABEL = dict(SYNTAXES)
 # 두 패널의 드롭박스 항목: 문법 4가지 + 렌더링(읽기 전용 모양 보기)
@@ -359,20 +360,9 @@ def save_settings(d):
         pass
 
 
-# ================================================================ Windows: '열기 방법' 목록에 등록
+# ================================================================ 아이콘 경로, 예전 '열기 방법' 등록 정리
 def icon_path(name):
     return os.path.join(HERE, "assets", name)
-
-
-def launcher_command():
-    if FROZEN:   # 단독 exe: 자기 자신을 연다
-        return f'"{sys.executable}" "%1"'
-    exe = sys.executable
-    if os.path.basename(exe).lower() == "python.exe":
-        w = os.path.join(os.path.dirname(exe), "pythonw.exe")
-        if os.path.exists(w):
-            exe = w
-    return f'"{exe}" "{os.path.join(HERE, "위키나루.pyw")}" "%1"'
 
 
 def _drop_progids(winreg, root, ids):
@@ -391,27 +381,56 @@ def _drop_progids(winreg, root, ids):
                 pass
 
 
-def register_open_with():
-    """현재 사용자 범위(HKCU)에만 쓴다. 기본 프로그램을 바꾸지는 않고 '열기 방법' 목록에 이 프로그램을 올린다."""
-    import winreg
-    root = winreg.HKEY_CURRENT_USER
-    _drop_progids(winreg, root, OLD_PROG_IDS)
-    base = CLASSES + "\\" + PROG_ID
-    with winreg.CreateKey(root, base) as k:
-        winreg.SetValueEx(k, "", 0, winreg.REG_SZ, APP)
-        winreg.SetValueEx(k, "FriendlyTypeName", 0, winreg.REG_SZ, APP)
-    with winreg.CreateKey(root, base + r"\shell\open\command") as k:
-        winreg.SetValueEx(k, "", 0, winreg.REG_SZ, launcher_command())
+def _has_registration(winreg, root, ids):
+    for pid in ids:
+        try:
+            winreg.CloseKey(winreg.OpenKey(root, CLASSES + "\\" + pid))
+            return True
+        except OSError:
+            pass
+        for ext in OPEN_EXTS:
+            try:
+                with winreg.OpenKey(root, CLASSES + "\\" + ext + r"\OpenWithProgids") as k:
+                    winreg.QueryValueEx(k, pid)
+                return True
+            except OSError:
+                pass
+    return False
+
+
+def _in_use(winreg, root, ids):
+    """사용자가 이 프로그램 ID 를 기본 앱(UserChoice)으로 골라 쓰는 중인가(읽기만)."""
     for ext in OPEN_EXTS:
-        with winreg.CreateKey(root, CLASSES + "\\" + ext + r"\OpenWithProgids") as k:
-            winreg.SetValueEx(k, PROG_ID, 0, winreg.REG_NONE, b"")
-    _notify_shell()
+        try:
+            with winreg.OpenKey(root, FILEEXTS + "\\" + ext + r"\UserChoice") as k:
+                if winreg.QueryValueEx(k, "ProgId")[0] in ids:
+                    return True
+        except OSError:
+            pass
+    return False
 
 
-def unregister_open_with():
-    import winreg
-    _drop_progids(winreg, winreg.HKEY_CURRENT_USER, (PROG_ID,) + OLD_PROG_IDS)
-    _notify_shell()
+def remove_legacy_registration(winreg=None, notify=True):
+    """예전 판이 '도움말 → 열기 방법에 등록'으로 레지스트리(현재 사용자 범위)에 써 둔 위키나루 항목을 지운다.
+    exe 를 옮기면 그 항목이 없는 경로를 가리켜 기본 앱 설정이 옛 경로로 되돌아오기 때문이다.
+    우리가 만든 항목(프로그램 ID 와 확장자의 OpenWithProgids 값)만 지우고, 등록한 적이 없으면 아무것도 쓰지 않는다.
+    사용자가 위키나루를 기본 앱으로 지정해 쓰는 중이면 그 연결이 끊기지 않게 지우지 않는다(UserChoice 는 읽기만).
+    지웠으면 True. 실패해도 프로그램 시작을 막지 않는다."""
+    if winreg is None:
+        if sys.platform != "win32":
+            return False
+        import winreg
+    try:
+        ids = (PROG_ID,) + OLD_PROG_IDS
+        root = winreg.HKEY_CURRENT_USER
+        if not _has_registration(winreg, root, ids) or _in_use(winreg, root, ids):
+            return False
+        _drop_progids(winreg, root, ids)
+        if notify:
+            _notify_shell()
+        return True
+    except Exception:
+        return False
 
 
 def _notify_shell():
@@ -869,10 +888,6 @@ def run_gui(argv=None, loop=True):
             v.add_command(label="글자 작게", accelerator="Ctrl+-", command=lambda: self.zoom(-1))
             menu.add_cascade(label="보기", menu=v)
             h = tk.Menu(menu, tearoff=0)
-            if sys.platform == "win32":
-                h.add_command(label="'열기 방법' 목록에 등록", command=self.register)
-                h.add_command(label="'열기 방법' 등록 해제", command=self.unregister)
-                h.add_separator()
             h.add_command(label="정보", command=lambda: messagebox.showinfo(
                 APP, "도쿠위키 · 미디어위키 · 오픈나무 · 마크다운 문법으로 쓰고,\n"
                      "다른 문법으로 바꿔 보여 주는 편집기입니다.\n내 컴퓨터 안에서만 동작합니다."))
@@ -1735,24 +1750,6 @@ def run_gui(argv=None, loop=True):
             ent.bind("<Return>", lambda e: go())
             top.bind("<Escape>", lambda e: top.destroy())
 
-        # ------------------------------------------------ 등록
-        def register(self):
-            try:
-                register_open_with()
-            except Exception as e:
-                messagebox.showerror(APP, f"등록하지 못했습니다:\n{e}")
-                return
-            messagebox.showinfo(APP, "등록했습니다.\n탐색기에서 .md 파일을 오른쪽 눌러 [연결 프로그램] → [다른 앱 선택] 에서 "
-                                     f"'{APP}' 를 고르고 [항상] 을 누르면 기본 프로그램이 됩니다.")
-
-        def unregister(self):
-            try:
-                unregister_open_with()
-            except Exception as e:
-                messagebox.showerror(APP, f"해제하지 못했습니다:\n{e}")
-                return
-            messagebox.showinfo(APP, "등록을 해제했습니다.")
-
     try:  # 윈도에서 글씨가 흐리게 보이지 않게, 작업표시줄에서 파이썬이 아닌 이 프로그램으로 묶이게
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -1774,6 +1771,8 @@ def run_gui(argv=None, loop=True):
 
 
 def main(argv=None):
+    if not os.environ.get("WIKINARU_NO_REGISTRY_CLEANUP"):   # 이 환경변수를 주면 정리를 건너뛴다(시험·점검용)
+        remove_legacy_registration()   # 예전 판이 남긴 '열기 방법' 등록(없는 경로를 가리킬 수 있음)을 정리
     run_gui(argv)
 
 

@@ -44,8 +44,70 @@ def main():
     assert editor.detect_format("# 제목\n**굵게**", "a.md") == "markdown"
     assert editor.detect_format("====== 제목 ======\n**굵게** //기울임//", "a.txt") == "dokuwiki"
     assert editor.detect_format("그냥 글", "a.txt") == "markdown"
-    cmd = editor.launcher_command()
-    assert cmd.startswith('"') and cmd.endswith('"%1"') and "위키나루.pyw" in cmd, cmd
+    assert not hasattr(editor, "launcher_command") and not hasattr(editor, "register_open_with")   # 등록 기능은 없앴다
+
+    # --- 예전 '열기 방법' 등록 정리(진짜 연결 키는 건드리지 않고, 시험용 키 HKCU\\Software\\WikiNaruTest 에서만)
+    if sys.platform == "win32":
+        import winreg
+        hk, base = winreg.HKEY_CURRENT_USER, "Software\\WikiNaruTest"
+        cls = base + "\\Classes"
+
+        def key_exists(path):
+            try:
+                winreg.CloseKey(winreg.OpenKey(hk, path))
+                return True
+            except OSError:
+                return False
+
+        def rm_tree(path):
+            try:
+                with winreg.OpenKey(hk, path) as k:
+                    while True:
+                        try:
+                            sub = winreg.EnumKey(k, 0)
+                        except OSError:
+                            break
+                        rm_tree(path + "\\" + sub)
+                winreg.DeleteKey(hk, path)
+            except OSError:
+                pass
+
+        def make_registration():
+            for pid in ("WikiNaruTest.App", "WikiNaruTest.Old"):                                   # 옛 경로를 가리키는 등록
+                with winreg.CreateKey(hk, cls + "\\" + pid + "\\shell\\open\\command") as k:
+                    winreg.SetValueEx(k, "", 0, winreg.REG_SZ, '"C:\\없는 폴더\\위키나루.exe" "%1"')
+            for ext in (".md", ".txt"):
+                with winreg.CreateKey(hk, cls + "\\" + ext + "\\OpenWithProgids") as k:
+                    winreg.SetValueEx(k, "WikiNaruTest.App", 0, winreg.REG_NONE, b"")
+                    winreg.SetValueEx(k, "Other.App", 0, winreg.REG_NONE, b"")                    # 남의 항목은 그대로 둔다
+        saved = (editor.CLASSES, editor.PROG_ID, editor.OLD_PROG_IDS, editor.FILEEXTS)
+        editor.CLASSES, editor.PROG_ID, editor.OLD_PROG_IDS = cls, "WikiNaruTest.App", ("WikiNaruTest.Old",)
+        editor.FILEEXTS = base + "\\FileExts"
+        try:
+            assert editor.remove_legacy_registration(notify=False) is False and not key_exists(base)   # 흔적이 없으면 아무것도 안 씀
+            make_registration()
+            # 기본 앱(UserChoice)으로 골라 쓰는 중이면 지우지 않는다
+            with winreg.CreateKey(hk, editor.FILEEXTS + "\\.md\\UserChoice") as k:
+                winreg.SetValueEx(k, "ProgId", 0, winreg.REG_SZ, "WikiNaruTest.App")
+            assert editor.remove_legacy_registration(notify=False) is False
+            assert key_exists(cls + "\\WikiNaruTest.App") and key_exists(cls + "\\WikiNaruTest.Old")
+            winreg.DeleteKey(hk, editor.FILEEXTS + "\\.md\\UserChoice")
+            with winreg.CreateKey(hk, editor.FILEEXTS + "\\.md\\UserChoice") as k:               # 다른 앱을 쓰는 중이면 지운다
+                winreg.SetValueEx(k, "ProgId", 0, winreg.REG_SZ, "Applications\\notepad.exe")
+            assert editor.remove_legacy_registration(notify=False) is True
+            assert not key_exists(cls + "\\WikiNaruTest.App") and not key_exists(cls + "\\WikiNaruTest.Old")
+            with winreg.OpenKey(hk, cls + "\\.md\\OpenWithProgids") as k:
+                assert winreg.QueryValueEx(k, "Other.App") is not None                         # 남의 항목은 남아 있다
+                try:
+                    winreg.QueryValueEx(k, "WikiNaruTest.App")
+                    raise AssertionError("값이 남아 있음")
+                except OSError:
+                    pass
+            assert editor.remove_legacy_registration(notify=False) is False                       # 다시 해도 아무 일 없음
+        finally:
+            editor.CLASSES, editor.PROG_ID, editor.OLD_PROG_IDS, editor.FILEEXTS = saved
+            rm_tree(base)
+        assert not key_exists(base)
 
     # --- 서식 도구(순수 함수)
     assert editor.wrap_text("글", "**", "**", "굵은 글") == ("**글**", 2, 3)
